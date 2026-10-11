@@ -1,0 +1,9 @@
+build/*
+cmake-build-debug/*
+.idea/*
+/mass3.csv
+cmake-*
+venv/*
+.vscode*/*
+/.vscode/
+External/*

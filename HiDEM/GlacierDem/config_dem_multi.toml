@@ -1,0 +1,178 @@
+[general]
+# set size scale of particles and the entire system
+scale = 20.0
+
+g = 9.81
+beamWidth = 0.5
+E = 2e+9
+waterLevel = 90.0
+maxVel = 20.0
+maxRot = 5.0
+bedInteract = 0.5
+bedStiffness = 2e+8
+waterDrag = 200.0
+airDrag = 10.0
+bedDrag = 10.0
+damping = 10000.0
+dampingRotation = 10000.0
+rhoIce = 910.0
+rhoWater = 1030.0
+maxLoad = 5e-4
+bendBreak = 0.01
+attractDistance = 0.01
+attractScaleForce = 1e-5
+
+# Boundary conditions enforced
+xBoundaryMin = true
+yBoundaryMin = true
+xBoundaryMax = true
+yBoundaryMax = false
+
+# DT
+dt = 0.0005
+# when to allow link breaking to start, in simulated time
+breakTime = 20.0
+
+[iteration]
+# number of iterations to run
+timeSteps = 600000
+# interval of how often to output
+outputInterval = 10000
+
+[externalForce]
+# external forces to be applied each time step
+# this section is under development, and will change when force changing over time gets implemented
+xForce = 0.0
+yForce = 0.0
+zForce = 0.0
+uForce = 0.0
+vForce = 0.0
+wForce = 0.0
+
+[output]
+# path to work from
+outWorkingPath = "../Data/"
+# The program will add the appropriate prefix to this name, wont be written if left empty or not present
+outParticleFile = "pOut"
+# the type of output we use, CSV or HDF5, VTK (buggy), VKTHDF
+outParticleType = "VTKHDF"
+# The program will add the appropriate prefix to this name, wont be written if left empty or not present
+outLinkFile = ""
+# the type of output we use, CSV or HDF5
+outLinkType = ""
+# path for where to output the resulting mesh, will inherit working path from output
+# ignored if no collision mesh is provided
+outMeshFile = ""
+# the type of output we use, mehses only supported with VTKHDF
+outMeshType = ""
+
+[grid]
+# searchDistanceScale will compute max particle diameter * searchDistanceScale and use it for the distance
+searchDistanceScale = 1.4
+# interval at which to regenerate the neighbour grid
+gridRegenInterval = -1
+
+[restart]
+# file to restart from if this is set it will look for the file to restart from
+# fromRestart = ""
+# enable checkpoint writing at end
+writeEndCheckpoint = true
+# interval at which to write the checkpoint -1 for no periodic
+checkpointInterval = -1
+# directory name in the working path to create the checkpoints in
+checkpointDirectory = "checkpoints"
+# append timestep to filename, if false it will only keep one file
+timestepCheckpoint = true
+
+
+[distribution]
+# compute when redistribution is needed live, it is then checked every time the grid is regenerated
+# and if a particle has moved too far it will trigger a redistribution
+dynamicRedistribution = true
+# if not dynamic redistribution how often should the redistribution be done
+redistributionInterval = 1000
+# enable rebalacning of domains at redistribution
+reBalance = true
+# tolerance to aim for at each split
+reBalanceTolerance = 0.001
+# at what iteration to do the first rebalance, to get the particles a chance to move a bit for a better balance result
+firstBalanceTimestep = 200
+# number of points to sample from the geometry for the initial balance step
+initBalancePoints = 100000
+# tolerance to aim for at each split
+initBalanceTolerance = 0.01
+# how big should the halos be, done as searchDistance * haloScale
+haloScale = 1.2
+
+# unscaled radius and spacing
+[lattice]
+type = "FCC"
+# yeah these constants are a bit arbitrary
+particleRadius = 0.5
+fccSpacing = 1.41421
+linkGenScale = 1.2
+
+# seed for random generation
+seed = 1
+# offset to add to seed for each rank
+seedOffset = 10
+# center the generated geometry around zero
+zeroCenter = false
+
+[world]
+# limit geometry generation to this XYZ box
+# these are optional, and if left out the geometry will be based on the geometry limits
+xInputUpper = 2000
+yInputUpper = 2000
+# zInputUpper = 1000.0
+xInputLower = 0
+yInputLower = 0
+# zInputLower = 0.0
+
+[[iceParameters]]
+# glacier
+linkGenerateProbability = 1.0
+boundingGeometry = "glacier NOT p1 NOT p2"
+linkWith = [0]
+
+[[iceParameters]]
+# pilar 1
+particleGenerateProbability = 0.8
+linkGenerateProbability = 1.0
+boundingGeometry = "p1"
+linkWith = [1]
+
+[[iceParameters]]
+# pilar 2
+linkGenerateProbability = 0.8
+boundingGeometry = "p2"
+linkWith = [2,0]
+
+
+[[geometry]]
+type = "dem"
+name = "glacier"
+path = "../HiDEM/GlacierDem/dem.csv"
+topFieldID = 2
+baseFieldID = 3
+
+[[geometry]]
+type = "box"
+name = "p1"
+lower = [300,300,0]
+upper = [500,500,500]
+
+[[geometry]]
+type = "box"
+name = "p2"
+lower = [300,1200,0]
+upper = [500,1600,500]
+
+
+[[collisionGeometry]]
+# mandatory to have one bed geometry
+type = "bed"
+name = "bed"
+path = "../HiDEM/GlacierDem/dem.csv"
+baseFieldID = 3
+frictionFieldID = 4

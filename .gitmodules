@@ -1,0 +1,17 @@
+[submodule "External/fmt"]
+	path = External/fmt
+	url = https://github.com/fmtlib/fmt.git
+[submodule "External/Vectorclass"]
+	path = External/Vectorclass
+	url = https://github.com/vectorclass/version2.git
+
+[submodule "External/tomlplusplus"]
+	path = External/tomlplusplus
+	url = https://github.com/marzer/tomlplusplus.git
+[submodule "External/Catch2"]
+	path = External/Catch2
+	url = https://github.com/catchorg/Catch2.git
+	branch = v2.x
+[submodule "External/toml11"]
+	path = External/toml11
+	url = https://github.com/ToruNiina/toml11.git

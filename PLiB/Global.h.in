@@ -1,0 +1,61 @@
+//
+// Created by Fredrik Robertsen on 25/10/2020.
+//
+
+#ifndef PHELL_GLOBAL_H
+#define PHELL_GLOBAL_H
+
+
+#ifndef MAKEFILE_BUILD
+#cmakedefine01 ENABLE_CUDA
+#cmakedefine01 ENABLE_HIP
+#cmakedefine ENABLE_OMP
+#cmakedefine ENABLE_CATCH
+#cmakedefine ENABLE_HDF5
+#cmakedefine ENABLE_PSTL
+#cmakedefine ENABLE_FMATH
+#cmakedefine ENABLE_RUN_REPRODUCE
+#cmakedefine ENABLE_ASAN
+#cmakedefine ENABLE_UBSAN
+#cmakedefine01 ENABLE_SIMD256
+#cmakedefine01 ENABLE_SIMD512
+#cmakedefine ENABLE_ASYNC_COMM
+#cmakedefine ENABLE_GDR
+#cmakedefine ENABLE_SMEM
+#cmakedefine ENABLE_HIP_MANAGED
+#cmakedefine SET_FP32
+#cmakedefine SET_CT_FP32
+#cmakedefine SET_LOCAL_ID_64
+#endif
+
+#if ( ENABLE_CUDA == 1) || ( ENABLE_HIP == 1)
+#define GPU
+#endif
+
+typedef long long int ind_t;
+// todo start using these
+typedef long long int gKey_t;
+#ifdef SET_LOCAL_ID_64
+typedef long long int pInd_t;
+typedef long long int lInd_t;
+#else
+typedef int pInd_t;
+typedef int lInd_t;
+#endif
+
+#ifdef SET_FP32
+typedef float lpReal_t;
+#else
+typedef double lpReal_t;
+#endif
+typedef double hpReal_t;
+
+// fix until CUDA fixes its support for c++20 ...
+#if ( ENABLE_SIMD256 == 1) || ( ENABLE_SIMD512 == 1)
+#define REALT_TEMPL <typename lpReal_t>
+#define ENABLE_SIMD
+#else
+#define REALT_TEMPL
+#endif
+
+#endif //PHELL_GLOBAL_H
