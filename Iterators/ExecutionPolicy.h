@@ -5,6 +5,8 @@
 #ifndef PHELL_EXECUTIONPOLICY_H
 #define PHELL_EXECUTIONPOLICY_H
 
+#include "DevPortabilityLayer.h"
+
 #ifdef ENABLE_PSTL
 #include <execution>
 // not the greatest hack but apparently even serial policies require tbb
@@ -50,6 +52,7 @@ public:
 // parallel device, or if not built for GPUs parallel host
 class OffloadExec: public ExecutionPolicy{
 public:
+    devStream_t *streamPtr;
     OffloadExec(){
         type = ExecType::Offload;
     }

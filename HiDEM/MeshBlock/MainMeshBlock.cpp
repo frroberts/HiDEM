@@ -13,6 +13,8 @@
 
 #include <filesystem>
 
+#include "Util/GPUSelect.h"
+
 class HiDEMParticleDataExt : public HiDEMParticleData {
 public:
     ManVec<int> flag;
@@ -68,6 +70,7 @@ int main(int argc, char *argv[]) {
     ArgParser arguments(argc, argv);
 
     MPI_Init(&argc, &argv);
+    selectDevice();
 
     lpReal_t breakTime = arguments.getArg<lpReal_t >("general.breakTime").value_or(10.0);
     lpReal_t dt = arguments.getArg<lpReal_t >("general.dt").value_or(0.0001);
@@ -203,11 +206,11 @@ int main(int argc, char *argv[]) {
                 lpReal_t radSum = radius + radiusOther;
                 lpReal_t activeDist2 = (radSum + attractDistance) * (radSum + attractDistance);
 
-                mask = select(particleDistance2 >= activeDist2, lpReal_t(0), mask);
+                mask = select(particleDistance2 >= activeDist2, lpReal_t(0.f), mask);
 
                 lpReal_t particleDistance = sqrt(particleDistance2);
 
-                lpReal_t invDist = lpReal_t(1.0) / particleDistance;
+                lpReal_t invDist = lpReal_t(1.0f) / particleDistance;
                 lpReal_t xComp = (xDist) * invDist;
                 lpReal_t yComp = (yDist) * invDist;
                 lpReal_t zComp = (zDist) * invDist;
@@ -259,9 +262,9 @@ int main(int argc, char *argv[]) {
                 lpReal_t zDist2 = zDist * zDist;
                 lpReal_t LI = sqrt(xDist2 + yDist2 + zDist2);
                 lpReal_t LP = sqrt(xDist2 + yDist2);
-                lpReal_t invLI = lpReal_t(1.0) / LI;
-                lpReal_t invLP = lpReal_t(1.0) / LP;
-                lpReal_t invLILP = lpReal_t(1.0) / (LI * LP);
+                lpReal_t invLI = lpReal_t(1.0f) / LI;
+                lpReal_t invLP = lpReal_t(1.0f) / LP;
+                lpReal_t invLILP = lpReal_t(1.0f) / (LI * LP);
 
                 lpReal_t T00 = xDist * invLI;
                 lpReal_t T01 = yDist * invLI;
@@ -293,7 +296,7 @@ int main(int argc, char *argv[]) {
 
                 lpReal_t K[6];
 
-                lpReal_t LIDiv6 = 1.f / (lpReal_t(6.0) * LI);
+                lpReal_t LIDiv6 = 1.f / (lpReal_t(6.0f) * LI);
 
                 K[0] = E * W2 * invLI;
                 K[1] = E * W4 / (L3);
@@ -458,7 +461,7 @@ int main(int argc, char *argv[]) {
         lpReal_t yThetaVel = (yTheta - yThetaPrev) * invDt;
         lpReal_t zThetaVel = (zTheta - zThetaPrev) * invDt;
 
-
+/*
         // Restrict maximum particle velocity to below maxVel and maxRot
         if (xVel > maxVel) {
             xCord = dt * maxVel + xCordPrev;
@@ -511,7 +514,7 @@ int main(int argc, char *argv[]) {
         if (yCord - radius > upperLimit.y && yBoundaryMax) {
             yCord = yCordPrev;
         }
-
+*/
 
         pData.xCord[pInd] = xCord;
         pData.yCord[pInd] = yCord;
@@ -563,6 +566,7 @@ int main(int argc, char *argv[]) {
         hiDem.gridService();
 
         RangeV2 r("timestep", 1);
+        auto forceLoop = xvtxRangeStart("forceLoop");
 
         hiDem.computePartForce(neighbourForceFunc, linkForceFunc,
                                packVecPtrs(pData.xDiff, pData.yDiff, pData.zDiff,
@@ -584,6 +588,8 @@ int main(int argc, char *argv[]) {
         }
 
         hiDem.finalizeTs();
+        xvtxRangeEnd(forceLoop);
+
 
     }
     xvtxRangeEnd(range);

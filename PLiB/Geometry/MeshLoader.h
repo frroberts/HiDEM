@@ -13,6 +13,7 @@
 
 #include "../Util/Real3.h"
 #include "Triangle.h"
+#include "../Logger/Logger.h"
 
 class MeshLoader {
 public:
@@ -89,7 +90,8 @@ public:
         end = std::chrono::system_clock::now();
 
         std::chrono::duration<double> elapsed_seconds = end - start;
-        std::cout << "load time: " << elapsed_seconds.count() << "s " << faces.size() << " triangles\n";
+        Logger::writeAtFirst("Mesh load time at rank 0: " + std::to_string(elapsed_seconds.count()) + "s " + std::to_string(faces.size()) + " triangles");
+
         return faces;
     }
 

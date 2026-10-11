@@ -156,7 +156,7 @@ class PinnedMem {
 
         if (allocated == true) {
 #ifdef GPU
-            devFree(ptr);
+            getErrorDev((devFreeHost(ptr)));
 #else
             delete[] ptr;
 #endif
@@ -182,7 +182,7 @@ public:
     ~PinnedMem() {
         if (allocated) {
 #ifdef GPU
-            devFreeHost(ptr);
+            getErrorDev((devFreeHost(ptr)));
 #else
             delete[] ptr;
 #endif

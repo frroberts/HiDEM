@@ -86,12 +86,9 @@ public:
         MPI_Barrier(MPI_COMM_WORLD);
         ManVec<unsigned char> Types;
         io.writeVectorFirst(Types, "Types");
-        ManVec<double> points;
-        for (auto i: indexes) {
-            points.push_back(xCords[i]);
-            points.push_back(yCords[i]);
-            points.push_back(zCords[i]);
-        }
+        ManVec<CordT> points;
+        packPoints(xCords, yCords, zCords, indexes, points);
+
         io.writeVectorAll2D(points, "Points", 3);
 
         io.openGroup("PointData");
@@ -99,6 +96,24 @@ public:
         io.closeGroup();
 
         io.closeGroup();
+    }
+
+    template<class CordT>
+    void packPoints(ManVec<CordT> &xCords, ManVec<CordT> &yCords, ManVec<CordT> &zCords, ManVec<pInd_t> &indexes, ManVec<CordT> &points) const {
+        points.resize(indexes.size() * 3);
+        CordT *pointPtr = points.data();
+        CordT *xCordsPtr = xCords.data();
+        CordT *yCordsPtr = yCords.data();
+        CordT *zCordsPtr = zCords.data();
+        pInd_t *indexesPtr = indexes.data();
+
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i) {
+            int ind = indexesPtr[i];
+            pointPtr[(i * 3) + 0] = (xCordsPtr[ind]);
+            pointPtr[(i * 3) + 1] = (yCordsPtr[ind]);
+            pointPtr[(i * 3) + 2] = (zCordsPtr[ind]);
+        }, indexes.size());
+        Iterator::syncAll();
     }
 
     // takes pointers and not manVec references because of how mesh data works ?

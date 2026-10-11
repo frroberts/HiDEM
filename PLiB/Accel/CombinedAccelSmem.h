@@ -17,12 +17,12 @@
 #include "DevPortabilityLayer.h"
 #include <Util/Unique.h>
 
-#ifdef ENABLE_CUDA
+#if (ENABLE_CUDA==1)
 
 #include <cub/cub.cuh>
 
 namespace cubX = cub;
-#elif ENABLE_HIP
+#elif (ENABLE_HIP==1)
 //#include <cub/cub.cuh>
 
 #include <hipcub/hipcub.hpp>
@@ -34,7 +34,7 @@ namespace cubX = hipcub;
 class CombinedAccelSmem : public CombinedAccel {
 public:
 
-    static constexpr int accelTotThreads = 512; // total threads in threadblock
+    static constexpr int accelTotThreads = 384; // total threads in threadblock
     static constexpr int accelxGrid = 128; // threads in x direction, rest will be filled with y, totThreads%accelxGrid == 0
     static constexpr int numInCache = 620; // total number of particles in cache
     static constexpr int indPerThread = (numInCache / accelxGrid) +
@@ -57,6 +57,7 @@ public:
 
     ManVec<pInd_t> nonCachableIndesxes;
 
+    ManVec<uint8_t> sideState;
 
     CombinedAccelSmem() {
         Logger::writeAtFirst(fmt::format("cache space reserved combined {} B \n",
@@ -87,12 +88,11 @@ public:
 
             iterateCombined(policy, postCommIndexes, pData, lData, nFunc, lFunc, args);
 
-            Iterator::syncAll();
 #endif
     }
 
     template<class T>
-    void generatePrePostCommIndexes(ParticleData &pData, LinkData &lData, Communicator<T> &comm) {
+    void generatePrePostCommIndexes(ParticleData &pData, LinkData &lData, T &comm) {
 #ifdef ENABLE_ASYNC_COMM
         preCommIndexes.clear();
         postCommIndexes.clear();
@@ -558,6 +558,30 @@ public:
             }
         }
 
+/*
+        sideState.resize(linkCTInd.size());
+        for (int i = 0; i < iterationOrder.size(); ++i) {
+            pInd_t pInd = iterationOrder[i];
+            int j = 0;
+            lAccel.iterateParticleLinksCT([&](auto lInd, auto sideInd, auto pIndOther){
+                    sideState[sideInd] = lData.state[lInd];
+                }, pInd);
+        }
+*/
+
+                 sideState.resize(linkCTInd.size());
+        auto statePtr = lData.state.data();
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i, CombinedAccelSmem &accel) {
+            pInd_t pInd = accel.iterationOrder[i];
+            int j = 0;
+            accel.lAccel.iterateParticleLinksCT([&](auto lInd, auto sideInd, auto pIndOther) {
+                accel.sideState[sideInd] = statePtr[lInd];
+            }, pInd);
+        }, iterationOrder.size(), *this);
+        Iterator::syncAll();
+
+
+
         Logger::writeAtFirst(fmt::format(
             "Cache stats, max space {}, world stats: max used {}, min used {}, max uncachable {} \n",
             numInCache, Logger::getMaxValWorld(max), Logger::getMaxValWorld(min), uncachable));
@@ -573,6 +597,47 @@ public:
     template<class Policy, typename NFun, typename LFun, class FullArgs>
     void iterateCombined(Policy policy, ManVec<pInd_t> &indexes, ParticleData &pData, LinkData &lData,
                          NFun &nFunc, LFun lFunc, FullArgs args);
+
+    template<class Policy, typename LFun, class FullArgs>
+    void iterateLinks(Policy policy, ParticleData &pData, LinkData &lData,
+                      LFun &lFunc, FullArgs args) {
+        //
+
+        lData.iterateAllLinks(policy, [=]
+        DEVCALLABLE(lInd_t lInd, pInd_t aParticleInd, pInd_t bParticleInd,
+                    LinkData &lData, LinkAccel &lAccel) {
+            auto pack = args.split();
+
+            auto partArgs = std::get<0>(pack);
+            auto linkSideArgs = std::get<1>(pack);
+            auto linkArgs = std::get<2>(pack);
+
+            auto partA = getAtIndTuple(aParticleInd, partArgs);
+            auto partB = getAtIndTuple(bParticleInd, partArgs);
+            //auto sideA = getAtIndTuple(bParticleInd, partArgs);
+            //auto sizeB = getAtIndTuple(bParticleInd, partArgs);
+
+            uint8_t initialState = lData.state[lInd];
+
+            auto all = std::tuple_cat(partA, partB);
+
+            auto linkVals = getAtIndTuple(lInd, linkArgs);
+
+            callFun2(lFunc, all, linkVals);
+
+            setAtIndTuple(lInd, linkArgs, linkVals);
+
+            uint8_t updatedState = lData.state[lInd];
+            if (updatedState != initialState && updatedState == 0) {
+                // break link in accel ?
+                // get an idea of what the performance impact of this is
+                sideState[lData.sideIndEndB[lInd]] = 0;
+                sideState[lData.sideIndEndA[lInd]] = 0;
+
+            }
+        }, lData, lAccel);
+
+    }
 };
 
 
@@ -645,7 +710,7 @@ pairIteratorCombinedCache(pInd_t *indexes, ParticleData &pData, LinkData &lData,
                           pInd_t *localPartIndAPtr, pInd_t *localPartIndBPtr, int16_t *neighPartIndInCachePtr,
                           int *numNeighsPtr,
                           int16_t *selfPartIndInCachePtr, uint8_t *statePtr,
-                          hpReal_t *xCordPtr, hpReal_t *yCordPtr, hpReal_t *zCordPtr,
+                          hpReal_t *xCordPtr, hpReal_t *yCordPtr, hpReal_t *zCordPtr, uint8_t *sideState,
                           size_t numIndexes, size_t offset, FullArgs args) {
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -710,8 +775,11 @@ pairIteratorCombinedCache(pInd_t *indexes, ParticleData &pData, LinkData &lData,
         auto cord = getAtIndTuple(pIndC, cordArgShrdPtr);
         auto self = getAtIndTuple(pIndC, neighArgsShrdPtr);
 
-        int end = numNeighsPtr[pInd];
-        for (size_t i = threadIdx.y; i < end; i = i + blockDim.y) {
+        int numNeighs = numNeighsPtr[pInd];
+        int particleLinkCount = linksPerParticlePtr[pInd];
+
+#pragma unroll 3
+        for (size_t i = threadIdx.y; i < numNeighs; i = i + blockDim.y) {
             pInd_t pIndOther = neighPartIndInCachePtr[idxCache + (i * offset)];  // not idx
             auto cordOther = getAtIndTuple(pIndOther, cordArgShrdPtr);
             auto neigh = getAtIndTuple(pIndOther, neighArgsShrdPtr);
@@ -729,25 +797,23 @@ pairIteratorCombinedCache(pInd_t *indexes, ParticleData &pData, LinkData &lData,
             //iteratedNeighs++;
         }
 
-        int particleLinkCount = linksPerParticlePtr[pInd];
+#pragma unroll 3
         for (int i = threadIdx.y; i < particleLinkCount; i = i + blockDim.y) {
-            pInd_t pIndOther = linkedPartIndInCachePtr[idxCache + (i * offset)]; // no need to reread size here // not idx
-            lInd_t ctInd = linkCTIndPtr[idxCache + (i * offset)];  // no need to reread size here // set ctind to -1 if link broken ? // not idx
-            lInd_t lInd = lData.getPartLinkId(i, pInd); // can i get rid of this read
+            pInd_t pIndOther = linkedPartIndInCachePtr[idxCache + (i * offset)];
+            lInd_t ctInd = linkCTIndPtr[idxCache + (i * offset)];
+            lInd_t lInd = lData.getPartLinkId(i, pInd);
 
             //if(blockId == 12)
             //    printf("%i %i %li %i %li \n", blockId, tid, pInd, i, ctInd);
             auto cordOther = getAtIndTuple(pIndOther, cordArgShrdPtr);
             auto neigh = getAtIndTuple(pIndOther, neighArgsShrdPtr);
             auto ct = getAtIndTuple(ctInd, linkSideArgs);
-            auto link = getAtIndTuple(ctInd, linkArgs);
+            auto link = getAtIndTuple(lInd, linkArgs);
 
             lpReal_t mask = 1;
-            uint8_t state = statePtr[lInd];
+            //uint8_t state = statePtr[lInd];
+            uint8_t state = sideState[ctInd];
             if (state == 0) { mask = 0; } // can i get rid of this read
-            else {
-                //iteratedLinks++;
-            }
 
             lpReal_t xDist = std::get<0>(cord) - std::get<0>(cordOther);//xCord - xCordOth;
             lpReal_t yDist = std::get<1>(cord) - std::get<1>(cordOther);//yCord - yCordOth;
@@ -851,6 +917,8 @@ void CombinedAccelSmem::iterateCombined(Policy policy, ManVec<pInd_t> &indexes, 
                                                                   pData.yCord.data(),
                                                                   pData.zCord.data(),
 
+                                                                  sideState.data(),
+
                                                                   indexes.size(),
                                                                   iterationOrder.size(),
                                                                   args
@@ -858,7 +926,7 @@ void CombinedAccelSmem::iterateCombined(Policy policy, ManVec<pInd_t> &indexes, 
 
         )));
 
-    Iterator::syncAll();
+    // Iterator::syncAll();
 #else
 #endif
 }

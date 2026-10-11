@@ -14,6 +14,7 @@
 #include "../ParticleData.h"
 #include "../Util/Util.h"
 #include "../NeighbourGrid.h"
+#include "Transporter.h"
 
 template<class T>
 class Communicator {
@@ -194,7 +195,7 @@ public:
 
     void unpackCommData(ManVec<T> &dataBuffer, int bufferInd) {
 #if defined(GPU) && !defined(ENABLE_GDR)
-            getErrorDev(devMemcpyAsync(incommingBuffers_dev[bufferInd].data(), incommingBuffers[bufferInd].data(),
+            getErrorDev(devMemcpy(incommingBuffers_dev[bufferInd].data(), incommingBuffers[bufferInd].data(),
                                     sizeof(T)*incommingBuffers[bufferInd].size(), devMemcpyDefault));
 
         Iterator::scatter(OffloadExec(), dataBuffer.data(), incommingBuffers_dev[bufferInd].data(),
@@ -204,6 +205,88 @@ public:
         Iterator::scatter(OffloadExec(), dataBuffer.data(), incommingBuffers[bufferInd].data(),
                           incommingIndexes.data(), incommingIndexes.size());
 #endif
+    }
+
+// todo update these to be better
+    template<typename... Tdat>
+    void packAllCommData(std::tuple<Tdat...> dataBuffers) {
+
+            //
+#if defined(GPU) && !defined(ENABLE_GDR)
+
+
+//        auto range = nvtxRangeStart("gather");
+
+    Iterator::gatherMulti(OffloadExec(), outgoingIndexes.size(), outgoingIndexes.data(),
+                          outgoingBuffers_dev[0].data(), std::get<0>(dataBuffers)->data(),
+                          outgoingBuffers_dev[1].data(), std::get<1>(dataBuffers)->data(),
+                          outgoingBuffers_dev[2].data(), std::get<2>(dataBuffers)->data(),
+                          outgoingBuffers_dev[3].data(), std::get<3>(dataBuffers)->data(),
+                          outgoingBuffers_dev[4].data(), std::get<4>(dataBuffers)->data(),
+                          outgoingBuffers_dev[5].data(), std::get<5>(dataBuffers)->data()
+                          );
+    devDeviceSynchronize();
+//    nvtxRangeEnd(range);
+
+//nvtxRangePush("memcpy gather");
+
+    for (int i = 0; i < outgoingBuffers.size(); ++i) {
+
+        (devMemcpyAsync(outgoingBuffers[i].data(), outgoingBuffers_dev[i].data(),
+                                    sizeof(lpReal_t)*outgoingBuffers[i].size(), devMemcpyDefault));
+    }
+    devDeviceSynchronize();
+//nvtxRangePop();
+#else
+
+    Iterator::gatherMulti(OffloadExec(), outgoingIndexes.size(), outgoingIndexes.data(),
+                          outgoingBuffers[0].data(), std::get<0>(dataBuffers)->data(),
+                          outgoingBuffers[1].data(), std::get<1>(dataBuffers)->data(),
+                          outgoingBuffers[2].data(), std::get<2>(dataBuffers)->data(),
+                          outgoingBuffers[3].data(), std::get<3>(dataBuffers)->data(),
+                          outgoingBuffers[4].data(), std::get<4>(dataBuffers)->data(),
+                          outgoingBuffers[5].data(), std::get<5>(dataBuffers)->data()
+                          );
+
+#endif
+    Iterator::syncAll();
+
+    }
+
+    template<typename... Tdat>
+    void unpackAllCommData(std::tuple<Tdat...> dataBuffers) {
+
+
+        #if defined(GPU) && !defined(ENABLE_GDR)
+//nvtxRangePush("memcpy scatter");
+    for (int i = 0; i < incommingBuffers.size(); ++i) {
+        (devMemcpyAsync(incommingBuffers_dev[i].data(), incommingBuffers[i].data(),
+                                    sizeof(lpReal_t)*incommingBuffers[i].size(), devMemcpyDefault));
+    }
+    devDeviceSynchronize();
+//nvtxRangePop();
+
+    Iterator::scatterMulti(OffloadExec(), incommingIndexes.size(), incommingIndexes.data(),
+                           std::get<0>(dataBuffers)->data(), incommingBuffers_dev[0].data(),
+                           std::get<1>(dataBuffers)->data(), incommingBuffers_dev[1].data(),
+                           std::get<2>(dataBuffers)->data(), incommingBuffers_dev[2].data(),
+                           std::get<3>(dataBuffers)->data(), incommingBuffers_dev[3].data(),
+                           std::get<4>(dataBuffers)->data(), incommingBuffers_dev[4].data(),
+                           std::get<5>(dataBuffers)->data(), incommingBuffers_dev[5].data()
+                        );
+#else
+    Iterator::scatterMulti(OffloadExec(), incommingIndexes.size(), incommingIndexes.data(),
+                           std::get<0>(dataBuffers)->data(), incommingBuffers[0].data(),
+                           std::get<1>(dataBuffers)->data(), incommingBuffers[1].data(),
+                           std::get<2>(dataBuffers)->data(), incommingBuffers[2].data(),
+                           std::get<3>(dataBuffers)->data(), incommingBuffers[3].data(),
+                           std::get<4>(dataBuffers)->data(), incommingBuffers[4].data(),
+                           std::get<5>(dataBuffers)->data(), incommingBuffers[5].data()
+                        );
+#endif
+
+    Iterator::syncAll();
+
     }
 
     void postRecvs()
@@ -316,6 +399,44 @@ public:
             //
             incommingIndexes[i] = indirectIncommingAddresses[incommingIndexes[i]];
         }
+
+    }
+
+    void initFromTransporter(TransporterV2 &transport){
+
+        outgoingGlobalKeys.resize(transport.outTargets.size());
+        incommingGlobalKeys.resize(transport.inTargets.size());
+        int self = getLocalRank();
+
+        int j = 0;
+        for (auto &target: transport.outTargets) {
+            outgoingTargets[target.targetRank] = j;
+
+            outgoingGlobalKeys[j].resize(target.globalKeys.size());
+            auto *outgoingKeys = outgoingGlobalKeys[j].ptr;
+            // todo fix names
+            auto *outgoingObjs = target.globalKeys.ptr;
+            Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i) {
+                outgoingKeys[i] = outgoingObjs[i];
+            }, target.count);
+
+            j++;
+        }
+        j = 0;
+        for (auto &target: transport.inTargets) {
+            incommingTargets[target.targetRank] = j;
+
+            incommingGlobalKeys[j].resize(target.globalKeys.size());
+            auto *incommingKeys = incommingGlobalKeys[j].ptr;
+            // todo fix names
+            auto *incommingObjs = target.globalKeys.ptr;
+            Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i) {
+                incommingKeys[i] = incommingObjs[i];
+            }, target.count);
+            j++;
+        }
+
+        Iterator::syncAll();
 
     }
 

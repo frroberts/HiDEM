@@ -104,6 +104,20 @@ namespace {
             gatherScatterRecurseDev(toInd, fromInd, inOutBuffers...);
         }
 
+
+        template<class Tind, typename Tdat>
+        DEVCALLABLE
+        static void gatherScatterRecursPackeDev(Tind toInd, Tind fromInd, Tdat* toBuffer,  Tdat* fromBuffer) {
+            toBuffer[toInd] = fromBuffer[fromInd];
+        }
+
+        template<class Tind, typename Tdat, typename... TdatPack>
+        DEVCALLABLE
+        static void gatherScatterRecursePackDev(Tind toInd, Tind fromInd, Tdat *toBuffer, Tdat *fromBuffer, [[maybe_unused]] TdatPack *... fromBuffers) {
+            toBuffer[toInd] = fromBuffer[fromInd];
+            gatherScatterRecurseDev(toInd, fromInd, toBuffer, fromBuffers...);
+        }
+
         template<class Tind, typename... Tdat>
         __global__ void gatherKern(int max, Tind *indexes, [[maybe_unused]] Tdat* ...inOutBuffers)
         {
@@ -125,6 +139,57 @@ namespace {
             gatherScatterRecurseDev(index, idx, inOutBuffers...);
         }
 
+
+
+/*
+        template<class Tind, typename Tdat>
+        DEVCALLABLE
+        inline void gatherRecursePackDev(int stride, Tind toInd, Tind fromInd, Tdat *toBuffer, Tdat *fromBuffer) {
+            toBuffer[toInd] = fromBuffer[fromInd];
+        }
+
+        template<class Tind, typename Tdat, typename... TdatPack>
+        DEVCALLABLE
+        inline void gatherRecursePackDev(int stride, Tind toInd, Tind fromInd, Tdat *toBuffer, Tdat *fromBuffer, [[maybe_unused]] TdatPack *... fromBuffers) {
+            toBuffer[toInd + (sizeof...(fromBuffers)*stride)] = fromBuffer[fromInd];
+            gatherRecursePackDev(stride, toInd, fromInd, toBuffer, fromBuffers...);
+        }
+
+        template<class Tind, typename Tdat>
+        DEVCALLABLE
+        inline void scatterRecursePackDev(int stride, Tind fromInd, Tind toInd, Tdat *fromBuffer, Tdat *toBuffer) {
+            toBuffer[toInd] = fromBuffer[fromInd];
+        }
+
+        template<class Tind, typename Tdat, typename... TdatPack>
+        DEVCALLABLE
+        inline void scatterRecursePackDev(int stride, Tind fromInd, Tind toInd, Tdat *fromBuffer, Tdat *toBuffer, [[maybe_unused]] TdatPack *... toBuffers) {
+            toBuffer[toInd] = fromBuffer[(fromInd) + (sizeof...(toBuffers)*stride)];
+            scatterRecursePackDev(stride, fromInd, toInd, fromBuffer, toBuffers...);
+
+        }
+
+        template<class Tind, typename Tdat, typename... TdatPack>
+        __global__ void gatherPackedKern(int max, Tind *indexes, Tdat* outBuffer, [[maybe_unused]] TdatPack* ...inBuffers)
+        {
+            //
+            Tind idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx >= max) return;
+            Tind index = indexes[idx];
+
+            gatherRecursePackDev(max, idx, index, outBuffer, inBuffers...);
+        }
+
+        template<class Tind, typename Tdat, typename... TdatPack>
+        __global__ void scatterPackedKern(int max, Tind *indexes, Tdat* inBuffer, [[maybe_unused]] TdatPack *...outBuffers) {
+            //
+            Tind idx = blockIdx.x * blockDim.x + threadIdx.x;
+            if (idx >= max) return;
+            Tind index = indexes[idx];
+
+            scatterRecursePackDev(max, idx, index, inBuffer, outBuffers...);
+        }
+*/
     }
 #endif
 

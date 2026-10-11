@@ -18,6 +18,7 @@ DEFS += -DSET_FP32=1
 DEFS += -DSET_CT_FP32=1
 DEFS += -DAOSOA_CT=1
 DEFS += -DENABLE_GDR=1
+DEFS += -DENABLE_ASYNC_COMM=1
 
 COMP = hipcc -Wno-unused-result
 FLAGS = ${INCL_PATHS} ${MPI_INCL} ${HDF5_INCL} ${DEFS} --std=c++20 -O3 -g --offload-arch=gfx90a

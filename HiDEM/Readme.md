@@ -124,9 +124,11 @@ For GPU builds SIMD needs to be disabled, and then your choice of GPU programmin
 ```
 mkdir build
 cd build
-cmake -DENABLE_SIMD=0 -DENABLE_CUDA=1 ..
+cmake -DENABLE_SIMD=0 -DENABLE_CUDA=1 -DENABLE_GDR=1 ..
 make -j HiDEM
 ```
+
+In case your MPI library is very very old and does not support GPU aware MPI set `-DENABLE_GDR` to 0.
 
 ## AMD GPU support om LUMI
 
@@ -141,10 +143,12 @@ Shared memory caching is essential for good performance on AMD hardware.
 ```
 mkdir build
 cd build
-cmake -DENABLE_HIP=1 -DENABLE_SIMD=0 -DENABLE_SMEM=1 ..
+cmake -DENABLE_HIP=1 -DENABLE_SIMD=0 -DENABLE_SMEM=1 -DENABLE_GDR=1 ..
 make -j HiDEM
 ```
 Running on AMD GPUs it is highly recommended that you ensure each process only has a single device exposed to it. I.e. use a helper script that sets `ROCR_VISIBLE_DEVICES` to the apropriate value before running HiDEM.
+
+In case your MPI library is very very old and does not support GPU aware MPI set `-DENABLE_GDR` to 0.
 
 # Running
 

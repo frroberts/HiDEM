@@ -13,6 +13,8 @@
 #include <Transport/Transporter.h>
 #include <Geometry/Map2d.h>
 #include <NeighbourGrid.h>
+#include <Transport/Communicator.h>
+#include <Transport/CommunicatorPacked.h>
 
 #define maxBB 1000
 
@@ -20,7 +22,7 @@ class HiDEMDistribution : public ManagedParent{
     //
 public:
     Communicator<ctReal_t> lCTComm;
-    Communicator<lpReal_t> pForceComm;
+    CommunicatorPacked<lpReal_t> pForceComm;
     Domain bounding;
 
     bool reBalanceActive;
@@ -43,14 +45,6 @@ public:
 
     void reDistribute(HiDEMParticleData &pData, HiDEMLinkData &lData, GlobalLocalMapper<gKey_t, pInd_t> &pMapper,
                               GlobalLocalMapper<gKey_t, lInd_t> &lMapper, double haloSize, double redistTolerance, bool CTSync);
-    void gatherHaloParticles(OffloadExec &execPolicy, HiDEMParticleData &pData);
-
-    void scatterHaloParticles(OffloadExec &execPolicy, HiDEMParticleData &pData);
-
-    void sendReceiveParticles();
-
-    void syncHaloParticles();
-
 
     HiDEMDistribution(const HiDEMDistribution &old_obj) = delete;
 

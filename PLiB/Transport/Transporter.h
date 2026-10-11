@@ -12,7 +12,6 @@
 
 #include <ManVec.h>
 
-#include "Communicator.h"
 #include "../World.h"
 #include "DevPortabilityLayer.h"
 #include "Util/MPIHelpers.h"
@@ -100,45 +99,6 @@ public:
     }
 
 
-    template<typename CommType>
-    Communicator<CommType> getCommunicator() {
-        Communicator<CommType> comm;
-        comm.outgoingGlobalKeys.resize(outTargets.size());
-        comm.incommingGlobalKeys.resize(inTargets.size());
-        int self = getLocalRank();
-
-        int j = 0;
-        for (auto &target: outTargets) {
-            comm.outgoingTargets[target.targetRank] = j;
-
-            comm.outgoingGlobalKeys[j].resize(target.globalKeys.size());
-            auto *outgoingKeys = comm.outgoingGlobalKeys[j].ptr;
-            // todo fix names
-            auto *outgoingObjs = target.globalKeys.ptr;
-            Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i) {
-                outgoingKeys[i] = outgoingObjs[i];
-            }, target.count);
-
-            j++;
-        }
-        j = 0;
-        for (auto &target: inTargets) {
-            comm.incommingTargets[target.targetRank] = j;
-
-            comm.incommingGlobalKeys[j].resize(target.globalKeys.size());
-            auto *incommingKeys = comm.incommingGlobalKeys[j].ptr;
-            // todo fix names
-            auto *incommingObjs = target.globalKeys.ptr;
-            Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i) {
-                incommingKeys[i] = incommingObjs[i];
-            }, target.count);
-            j++;
-        }
-
-        Iterator::syncAll();
-
-        return comm;
-    }
 
     void clear() {
         inTargets.clear();

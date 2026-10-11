@@ -13,6 +13,7 @@
 #include "TomlParser.h"
 #include "../Logger/Logger.h"
 #include "Util.h"
+#include "../Geometry/Map2dLoader.h"
 
 using namespace std::literals;
 
@@ -244,6 +245,40 @@ public:
             ret = lineValue;
         }
         return ret;
+    }
+
+    // gets a pointer to 2d map from the config file
+    template<class T>
+    std::optional<Map2d<T>*> getMap2dPtr(std::string name) {
+                bool found = false;
+        toml::value tomlMap;
+        if (auto pos = name.find("."); pos == std::string::npos) {
+            tomlMap = toml::find(table, name);
+            found = true;
+        } else {
+            //
+            std::string first = name.substr(0, pos);
+            std::string second = name.substr(pos + 1, name.length());
+
+            if (table.contains(first)) {
+                toml::value tomlFirst = toml::find(table, first);
+                if (tomlFirst.contains(second)) {
+                    tomlMap = toml::find(tomlFirst, second);
+                    found = true;
+                }
+            }
+        }
+
+        // figure out what map we are building
+        if (found && tomlMap.is_table()) {
+            // todo check what type it is, current is only csv2d
+            // todo clean up memory
+            Map2dLoader loader;
+            loader.readInput(toml::find<std::string>(tomlMap, "path"));
+            auto ptr = loader.get<lpReal_t>(toml::find<int>(tomlMap, "fieldID"));
+            return ptr;
+        }
+        return {};
     }
 
     void printPossibleCLIArgs() {

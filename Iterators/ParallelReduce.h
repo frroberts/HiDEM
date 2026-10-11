@@ -23,10 +23,10 @@
 #include <thrust/functional.h>
 #include <thrust/execution_policy.h>
 
-#ifdef ENABLE_CUDA
+#if (ENABLE_CUDA==1)
 #include <cub/cub.cuh>
 namespace cubX = cub;
-#elif ENABLE_HIP
+#elif (ENABLE_HIP==1)
 //#include <cub/cub.cuh>
 
 #include <hipcub/hipcub.hpp>
@@ -58,9 +58,9 @@ namespace {
 
             for (int offset = 1; offset <= 16; offset *= 2) {
 
-#ifdef ENABLE_CUDA
+#if (ENABLE_CUDA==1)
                 T other = __shfl_down_sync(0xffffffff, val, offset);
-#elif ENABLE_HIP
+#elif (ENABLE_HIP==1)
                 T other = __shfl_down(val, offset);
 #endif
                 if (idx + offset < size) {
@@ -81,9 +81,9 @@ namespace {
 
                 for (int offset = 1; offset <= 16; offset *= 2) {
 
-#ifdef ENABLE_CUDA
+#if (ENABLE_CUDA==1)
                 T other = __shfl_down_sync(0xffffffff, val, offset);
-#elif ENABLE_HIP
+#elif (ENABLE_HIP==1)
                 T other = __shfl_down(val, offset);
 #endif
                     if ((blockIdx.x * blockDim.x + ((threadIdx.x + offset) * 32)) < size) {

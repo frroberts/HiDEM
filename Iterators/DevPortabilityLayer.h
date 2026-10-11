@@ -9,14 +9,15 @@
 #include <iostream>
 #include <cstdint>
 
-#define CUDA_ENABLED ( ENABLE_CUDA == 1)
-#define HIP_ENABLED ( ENABLE_HIP == 1)
+// this is a bit meh, fix better at some point
+#include "../PLiB/Global.h"
 
-#if CUDA_ENABLED
+
+#if ENABLE_CUDA
 #include <cuda_runtime_api.h>
 #include <cuda_profiler_api.h>
 #include <nvtx3/nvToolsExt.h>
-#elif HIP_ENABLED
+#elif ENABLE_HIP
 // #include <hip_runtime_api.h>
 #include "hip/hip_runtime.h"
 // #include <roctracer_ext.h>
@@ -24,7 +25,7 @@
 #endif
 
 // launch bounds for AMD systems
-#if (defined(ENABLE_HIP) && ENABLE_HIP == 1)
+#if ENABLE_HIP == 1
 #define LBounds(MAX_THREADS_PER_BLOCK, MIN_WARPS_PER_EXECUTION_UNIT) __launch_bounds__(MAX_THREADS_PER_BLOCK, MIN_WARPS_PER_EXECUTION_UNIT)
 #else
 #define LBounds(MAX_THREADS_PER_BLOCK, MIN_WARPS_PER_EXECUTION_UNIT)
@@ -33,23 +34,25 @@
 // partial implementation of a portability layer between HIP and cuda as i dont want to hipify the entire thing
 
 
-#if CUDA_ENABLED
+#if ENABLE_CUDA
 typedef cudaError_t devError_t;
 typedef cudaMemcpyKind devMemcpyKind;
 typedef cudaStream_t devStream_t;
 #define devMemcpyDefault cudaMemcpyDefault
 #define devSuccess cudaSuccess
 #define devMemoryAdvise cudaMemoryAdvise
+#define devStreamNonBlocking cudaStreamNonBlocking
 
 #define xvtxRangeId_t nvtxRangeId_t
 
-#elif HIP_ENABLED
+#elif ENABLE_HIP
 typedef hipError_t devError_t;
 typedef hipMemcpyKind devMemcpyKind;
 typedef hipStream_t devStream_t;
 #define devMemcpyDefault hipMemcpyDefault
 #define devSuccess hipSuccess
 #define devMemoryAdvise hipMemoryAdvise
+#define devStreamNonBlocking hipStreamNonBlocking
 
 #define xvtxRangeId_t uint64_t
 
@@ -66,9 +69,9 @@ typedef int devMemoryAdvise;
 
 
 inline devError_t devMallocManaged(void** ptr, size_t size){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaMallocManaged(ptr, size);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
 // #ifdef ENABLE_HIP_MANAGED
 //     return hipMallocManaged(ptr, size);
 // #else
@@ -81,9 +84,9 @@ inline devError_t devMallocManaged(void** ptr, size_t size){
 }
 
 inline devError_t devMalloc(void** ptr, size_t size){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaMalloc(ptr, size);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipMalloc(ptr, size);
 #else
     return 0;
@@ -91,9 +94,9 @@ inline devError_t devMalloc(void** ptr, size_t size){
 }
 
 inline devError_t devMallocHost(void** ptr, size_t size){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaMallocHost(ptr, size);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipHostMalloc(ptr, size);
 #else
     return 0;
@@ -101,9 +104,9 @@ inline devError_t devMallocHost(void** ptr, size_t size){
 }
 
 inline devError_t devFree(void* ptr){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaFree(ptr);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipFree(ptr);
 #else
     return 0;
@@ -111,9 +114,9 @@ inline devError_t devFree(void* ptr){
 }
 
 inline devError_t devFreeHost(void* ptr){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaFreeHost(ptr);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipHostFree(ptr);
 #else
     return 0;
@@ -123,9 +126,9 @@ inline devError_t devFreeHost(void* ptr){
 
 
 inline devError_t devMemcpy(void* dst, const void* src, size_t count, devMemcpyKind kind ){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaMemcpy(dst, src, count, kind);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipMemcpy(dst, src, count, kind);
 #else
     return 0;
@@ -133,9 +136,9 @@ inline devError_t devMemcpy(void* dst, const void* src, size_t count, devMemcpyK
 }
 
 inline devError_t devMemcpyAsync(void* dst, const void* src, size_t count, devMemcpyKind kind, devStream_t stream = 0){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaMemcpyAsync(dst, src, count, kind, stream);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipMemcpyAsync(dst, src, count, kind, stream);
 #else
     return 0;
@@ -143,9 +146,9 @@ inline devError_t devMemcpyAsync(void* dst, const void* src, size_t count, devMe
 }
 
 inline devError_t devSetDevice(int dev){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaSetDevice(dev);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipSetDevice(dev);
 #else
     return 0;
@@ -153,9 +156,9 @@ inline devError_t devSetDevice(int dev){
 }
 
 inline devError_t devGetDevice(int* dev){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaGetDevice(dev);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipGetDevice(dev);
 #else
         return 0;
@@ -163,9 +166,9 @@ inline devError_t devGetDevice(int* dev){
 }
 
 inline devError_t devGetDeviceCount(int* count){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaGetDeviceCount(count);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipGetDeviceCount(count);
 #else
     return 0;
@@ -173,9 +176,9 @@ inline devError_t devGetDeviceCount(int* count){
 }
 
 inline devError_t devDeviceSynchronize(){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaDeviceSynchronize();
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipDeviceSynchronize();
 #else
     return 0;
@@ -183,9 +186,9 @@ inline devError_t devDeviceSynchronize(){
 }
 
 inline devError_t devProfilerStart(){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaProfilerStart();
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     //return roctracer_start();
     return hipError_t();
 #else
@@ -194,9 +197,9 @@ inline devError_t devProfilerStart(){
 }
 
 inline devError_t devProfilerStop(){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaProfilerStop();
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     //return roctracer_stop();
     return hipError_t();
 #else
@@ -205,9 +208,9 @@ inline devError_t devProfilerStop(){
 }
 
 inline const char* devGetErrorString(devError_t error){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaGetErrorString(error);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipGetErrorString(error);
 #else
     return 0;
@@ -215,9 +218,9 @@ inline const char* devGetErrorString(devError_t error){
 }
 
 inline devError_t devGetLastError(){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaGetLastError();
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipGetLastError();
 #else
     return 0;
@@ -225,9 +228,9 @@ inline devError_t devGetLastError(){
 }
 
 inline devError_t devPeekAtLastError(){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaPeekAtLastError();
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipPeekAtLastError();
 #else
     return 0;
@@ -235,9 +238,9 @@ inline devError_t devPeekAtLastError(){
 }
 
 inline devError_t devMemAdvice(const void * ptr, size_t count, devMemoryAdvise advice, int device){
-   #if CUDA_ENABLED
+   #if ENABLE_CUDA
     return cudaMemAdvise(ptr, count, advice, device);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipMemAdvise(ptr, count, advice, device);
 #else
     return 0;
@@ -245,9 +248,9 @@ inline devError_t devMemAdvice(const void * ptr, size_t count, devMemoryAdvise a
 }
 
 inline devError_t devDeviceGetPCIBusId(char* pciBusId, int  len, int  device) {
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return cudaDeviceGetPCIBusId(pciBusId, len, device);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return hipDeviceGetPCIBusId(pciBusId, len, device);
 #else
     return 0;
@@ -255,10 +258,50 @@ inline devError_t devDeviceGetPCIBusId(char* pciBusId, int  len, int  device) {
     //
 }
 
+inline devError_t devStreamCreateWithFlags(devStream_t * pStream, unsigned int  flags){
+#if ENABLE_CUDA
+    return cudaStreamCreateWithFlags(pStream, flags);
+#elif ENABLE_HIP
+    return hipStreamCreateWithFlags(pStream, flags);
+#else
+    return 0;
+#endif
+}
+
+inline devError_t devStreamDestroy(devStream_t pStream){
+#if ENABLE_CUDA
+    return cudaStreamDestroy(pStream);
+#elif ENABLE_HIP
+    return hipStreamDestroy(pStream);
+#else
+    return 0;
+#endif
+}
+
+inline devError_t devStreamCreate(devStream_t * pStream ){
+#if ENABLE_CUDA
+    return cudaStreamCreate(pStream);
+#elif ENABLE_HIP
+    return hipStreamCreate(pStream);
+#else
+    return 0;
+#endif
+}
+
+inline devError_t devStreamSynchronize(devStream_t pStream){
+#if ENABLE_CUDA
+    return cudaStreamSynchronize(pStream);
+#elif ENABLE_HIP
+    return hipStreamSynchronize(pStream);
+#else
+    return 0;
+#endif
+}
+
 inline xvtxRangeId_t xvtxRangeStart(std::string name){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     return nvtxRangeStart(name.c_str());
-#elif HIP_ENABLED
+#elif ENABLE_HIP
     return 0;
 #else
     return 0;
@@ -266,9 +309,9 @@ inline xvtxRangeId_t xvtxRangeStart(std::string name){
 }
 
 inline void xvtxRangeEnd(xvtxRangeId_t range){
-#if CUDA_ENABLED
+#if ENABLE_CUDA
     nvtxRangeEnd (range);
-#elif HIP_ENABLED
+#elif ENABLE_HIP
 #else
 #endif
 }

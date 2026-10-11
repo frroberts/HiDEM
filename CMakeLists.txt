@@ -9,7 +9,7 @@ include(CheckCXXCompilerFlag)
 set(CMAKE_CXX_STANDARD 20)
 
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -O3")
 
 option(ENABLE_CUDA "Enable CUDA" OFF)
 option(ENABLE_HIP "Enable HIP" OFF)
@@ -74,11 +74,12 @@ endif ()
 
 if (ENABLE_CUDA)
     check_language(CUDA REQUIRED)
+    set(CMAKE_CUDA_ARCHITECTURES "70" "75" "86")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr -std=c++20 -lineinfo -g -allow-unsupported-compiler" )
+
     enable_language(CUDA)
 
     find_package(CUDA REQUIRED)
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr -std=c++20 -lineinfo -g -allow-unsupported-compiler" )
-    set(CMAKE_CUDA_ARCHITECTURES "70" "75" "86")
 
 endif ()
 

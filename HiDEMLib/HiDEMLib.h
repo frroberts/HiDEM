@@ -29,6 +29,7 @@
 #include "LoggerV2/RangeCollection.h"
 #include "Transport/ParticleTransporter.h"
 
+
 // no need to include these if they are not used
 #if defined(GPU) && defined(ENABLE_SMEM)
 #include "../PLiB/Accel/CombinedAccelSmem.h"
@@ -244,37 +245,65 @@ public:
         }
 
         {
+            auto range = xvtxRangeStart("pre");
             RangeV2 r("force neigh/linked pre", 3);
             accel->iterateCombinedPre(execType, *pDataPtr, *lDataPtr, neighbourForceFunc, linkForceFunc, fullArgs);
-            Iterator::syncAll();
+            xvtxRangeEnd(range);
+
         }
 
         {
             RangeV2 r("particle communication gather", 3);
 
-            distr->gatherHaloParticles(execType, *pDataPtr);
+            // distr->gatherHaloParticles(execType, *pDataPtr);
+            distr->pForceComm.packAllCommData(packVecPtrs(
+                    pDataPtr->xForce, pDataPtr->yForce, pDataPtr->zForce, pDataPtr->uForce, pDataPtr->vForce,pDataPtr->wForce));
             Iterator::syncAll();
-        }
-        {
-            RangeV2 r("post sends", 3);
-            distr->pForceComm.postSends();
         }
 
         {
             RangeV2 r("force neigh/linked post", 3);
+            auto rangePost = xvtxRangeStart("force neigh/linked post");
+
             accel->iterateCombinedPost(execType, *pDataPtr, *lDataPtr, neighbourForceFunc, linkForceFunc, fullArgs);
-            Iterator::syncAll();
+            xvtxRangeEnd(rangePost);
+
         }
 
         {
+            auto rangePost = xvtxRangeStart("post sends");
+
+            RangeV2 r("post sends", 3);
+            distr->pForceComm.postSends();
+            xvtxRangeEnd(rangePost);
+
+        }
+
+
+
+        {
+            auto rangePost = xvtxRangeStart("particle comm wait recv");
+
             RangeV2 r("particle comm wait recv", 3);
             distr->pForceComm.syncRecvs();
+            xvtxRangeEnd(rangePost);
+
         }
+
 
         {
             RangeV2 r("particle communication scatter", 3);
-            distr->scatterHaloParticles(execType, *pDataPtr);
+            // distr->scatterHaloParticles(execType, *pDataPtr);
+            distr->pForceComm.unpackAllCommData(packVecPtrs(
+                    pDataPtr->xForce, pDataPtr->yForce, pDataPtr->zForce, pDataPtr->uForce, pDataPtr->vForce,pDataPtr->wForce));
+        }
+        {
+            auto rangePost = xvtxRangeStart("sync");
+
+            RangeV2 r("sync", 3);
             Iterator::syncAll();
+            xvtxRangeEnd(rangePost);
+
         }
         xvtxRangeEnd(range);
     }

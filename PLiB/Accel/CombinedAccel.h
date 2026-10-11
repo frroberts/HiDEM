@@ -11,6 +11,7 @@
 #include <ParallelSelect.h>
 #include <TupleHelpers.h>
 #include <Transport/Communicator.h>
+#include <Transport/CommunicatorPacked.h>
 
 #include "LoggerV2/RangeCollection.h"
 
@@ -34,7 +35,7 @@ public:
     }
 
     template<class T>
-    void generatePrePostCommIndexes(ParticleData &pData, LinkData &lData, Communicator<T> &comm){
+    void generatePrePostCommIndexes(ParticleData &pData, LinkData &lData, T &comm){
         RangeV2 r("generate pre/post indexes", 3);
 
         preCommIndexes.clear();
@@ -85,7 +86,6 @@ public:
 #ifdef ENABLE_ASYNC_COMM
 
         iterateCombined(policy, preCommIndexes, pData, lData, nFunc, lFunc, args);
-
 #warning "compiling async comm"
 #else
         iterateCombined(policy, pData.ownedIndexes, pData, lData, nFunc, lFunc, args);

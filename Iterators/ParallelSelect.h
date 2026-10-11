@@ -13,10 +13,10 @@
 
 #ifdef GPU
 #include "DevPortabilityLayer.h"
-#ifdef ENABLE_CUDA
+#if (ENABLE_CUDA==1)
 #include <cub/cub.cuh>
 namespace cubX = cub;
-#elif ENABLE_HIP
+#elif (ENABLE_HIP==1)
 //#include <cub/cub.cuh>
 
 #include <hipcub/hipcub.hpp>

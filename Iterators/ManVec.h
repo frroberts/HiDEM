@@ -13,9 +13,7 @@
 #include <iostream>
 #include <vector>
 
-#ifdef GPU
 #include "DevPortabilityLayer.h"
-#endif
 #include "DevCall.h"
 #include "Allocator.h"
 

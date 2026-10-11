@@ -12,10 +12,10 @@
 
 #ifdef GPU
 #include "DevPortabilityLayer.h"
-#ifdef ENABLE_CUDA
+#if (ENABLE_CUDA==1)
 #include <cub/cub.cuh>
 namespace cubX = cub;
-#elif ENABLE_HIP
+#elif (ENABLE_HIP==1)
 // todo this should really not be needed ...
 #include "/opt/rocm/include/hipcub/backend/rocprim/device/device_partition.hpp"
 #include <hipcub/hipcub.hpp>

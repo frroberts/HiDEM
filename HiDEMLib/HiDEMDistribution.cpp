@@ -147,12 +147,12 @@ void HiDEMDistribution::distribute(HiDEMParticleData &pData, HiDEMLinkData &lDat
 
     RangeV2 r7("make communicator", 3);
 
-    pForceComm = pTrans->getCommunicator<lpReal_t>();
+    pForceComm.initFromTransporter(*pTrans);
     pForceComm.tagStart = 64;
     pForceComm.setNumBuffers(6);
     pForceComm.makeLocalIndexes(pMapper);
 
-    lCTComm = lTrans->getCommunicator<ctReal_t>();
+    lCTComm.initFromTransporter(*lTrans);
 
     // pForceComm.makePreCommIndexes(pData, pMapper);
     r7.end();
@@ -205,105 +205,4 @@ void HiDEMDistribution::reDistribute(HiDEMParticleData &pData, HiDEMLinkData &lD
     }
 
     distribute(pData, lData, pMapper, lMapper);
-}
-
-void HiDEMDistribution::gatherHaloParticles(OffloadExec &execPolicy, HiDEMParticleData &pData) {
-    //
-#if defined(GPU) && !defined(ENABLE_GDR)
-
-
-//        auto range = nvtxRangeStart("gather");
-
-    Iterator::gatherMulti(OffloadExec(), pForceComm.outgoingIndexes.size(), pForceComm.outgoingIndexes.data(),
-                          pForceComm.outgoingBuffers_dev[0].data(), pData.xForce.data(),
-                          pForceComm.outgoingBuffers_dev[1].data(), pData.yForce.data(),
-                          pForceComm.outgoingBuffers_dev[2].data(), pData.zForce.data(),
-                          pForceComm.outgoingBuffers_dev[3].data(), pData.uForce.data(),
-                          pForceComm.outgoingBuffers_dev[4].data(), pData.vForce.data(),
-                          pForceComm.outgoingBuffers_dev[5].data(), pData.wForce.data()
-                          );
-    devDeviceSynchronize();
-//    nvtxRangeEnd(range);
-
-//nvtxRangePush("memcpy gather");
-
-    for (int i = 0; i < pForceComm.outgoingBuffers.size(); ++i) {
-
-        (devMemcpyAsync(pForceComm.outgoingBuffers[i].data(), pForceComm.outgoingBuffers_dev[i].data(),
-                                    sizeof(lpReal_t)*pForceComm.outgoingBuffers[i].size(), devMemcpyDefault));
-    }
-    devDeviceSynchronize();
-//nvtxRangePop();
-#else
-
-    Iterator::gatherMulti(OffloadExec(), pForceComm.outgoingIndexes.size(), pForceComm.outgoingIndexes.data(),
-                          pForceComm.outgoingBuffers[0].data(), pData.xForce.data(),
-                          pForceComm.outgoingBuffers[1].data(), pData.yForce.data(),
-                          pForceComm.outgoingBuffers[2].data(), pData.zForce.data(),
-                          pForceComm.outgoingBuffers[3].data(), pData.uForce.data(),
-                          pForceComm.outgoingBuffers[4].data(), pData.vForce.data(),
-                          pForceComm.outgoingBuffers[5].data(), pData.wForce.data()
-                          );
-
-#endif
-    Iterator::syncAll();
-
-}
-
-void HiDEMDistribution::scatterHaloParticles(OffloadExec &execPolicy, HiDEMParticleData &pData) {
-    //
-
-#if defined(GPU) && !defined(ENABLE_GDR)
-//nvtxRangePush("memcpy scatter");
-    for (int i = 0; i < pForceComm.incommingBuffers.size(); ++i) {
-        (devMemcpyAsync(pForceComm.incommingBuffers_dev[i].data(), pForceComm.incommingBuffers[i].data(),
-                                    sizeof(lpReal_t)*pForceComm.incommingBuffers[i].size(), devMemcpyDefault));
-    }
-    devDeviceSynchronize();
-//nvtxRangePop();
-
-    Iterator::scatterMulti(OffloadExec(), pForceComm.incommingIndexes.size(), pForceComm.incommingIndexes.data(),
-                           pData.xForce.data(), pForceComm.incommingBuffers_dev[0].data(),
-                           pData.yForce.data(), pForceComm.incommingBuffers_dev[1].data(),
-                           pData.zForce.data(), pForceComm.incommingBuffers_dev[2].data(),
-                           pData.uForce.data(), pForceComm.incommingBuffers_dev[3].data(),
-                           pData.vForce.data(), pForceComm.incommingBuffers_dev[4].data(),
-                           pData.wForce.data(), pForceComm.incommingBuffers_dev[5].data()
-                        );
-#else
-    Iterator::scatterMulti(OffloadExec(), pForceComm.incommingIndexes.size(), pForceComm.incommingIndexes.data(),
-                           pData.xForce.data(), pForceComm.incommingBuffers[0].data(),
-                           pData.yForce.data(), pForceComm.incommingBuffers[1].data(),
-                           pData.zForce.data(), pForceComm.incommingBuffers[2].data(),
-                           pData.uForce.data(), pForceComm.incommingBuffers[3].data(),
-                           pData.vForce.data(), pForceComm.incommingBuffers[4].data(),
-                           pData.wForce.data(), pForceComm.incommingBuffers[5].data()
-                        );
-#endif
-
-/*
-    MPI_Waitall(pForceComm.inRequests[0].size(), pForceComm.inRequests[0].data(), MPI_STATUSES_IGNORE);
-    pForceComm.unpackCommData(pData.xForce, 0);
-    MPI_Waitall(pForceComm.inRequests[1].size(), pForceComm.inRequests[1].data(), MPI_STATUSES_IGNORE);
-    pForceComm.unpackCommData(pData.yForce, 1);
-    MPI_Waitall(pForceComm.inRequests[2].size(), pForceComm.inRequests[2].data(), MPI_STATUSES_IGNORE);
-    pForceComm.unpackCommData(pData.zForce, 2);
-    MPI_Waitall(pForceComm.inRequests[3].size(), pForceComm.inRequests[3].data(), MPI_STATUSES_IGNORE);
-    pForceComm.unpackCommData(pData.uForce, 3);
-    MPI_Waitall(pForceComm.inRequests[4].size(), pForceComm.inRequests[4].data(), MPI_STATUSES_IGNORE);
-    pForceComm.unpackCommData(pData.vForce, 4);
-    MPI_Waitall(pForceComm.inRequests[5].size(), pForceComm.inRequests[5].data(), MPI_STATUSES_IGNORE);
-    pForceComm.unpackCommData(pData.wForce, 5);
-*/
-    Iterator::syncAll();
-}
-
-void HiDEMDistribution::sendReceiveParticles() {
-    pForceComm.postRecvs();
-    pForceComm.postSends();
-}
-
-void HiDEMDistribution::syncHaloParticles() {
-    pForceComm.syncRecvs();
-    pForceComm.syncSends();
 }

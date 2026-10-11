@@ -58,6 +58,8 @@ add_library(PLiB STATIC
         LoggerV2/RangeCollection.cpp
         LoggerV2/RangeCollection.h
         Accel/CombinedAccelSIMD.h
+        Transport/CommunicatorPacked.h
+        Util/GPUSelect.h
 )
 
 if(ENABLE_OMP)
@@ -109,8 +111,12 @@ elseif (ENABLE_HIP)
 
     find_package(rocprim REQUIRED)
     find_package(hipcub REQUIRED)
+    find_package(rocthrust REQUIRED)
 
     target_link_libraries(PLiB PUBLIC hip::hipcub)
+    target_link_libraries(PLiB PUBLIC roc::rocthrust)
+    target_link_libraries(PLiB PUBLIC roc::rocprim)
+
 
 endif()
 

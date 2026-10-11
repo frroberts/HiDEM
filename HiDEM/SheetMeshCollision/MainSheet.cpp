@@ -17,6 +17,8 @@
 
 #include <filesystem>
 
+#include "Util/GPUSelect.h"
+
 class HiDEMLinkDataExt : public HiDEMLinkData {
 public:
     ManVec<lpReal_t > maxLen;
@@ -71,6 +73,7 @@ int main(int argc, char *argv[]) {
     ArgParser arguments(argc, argv);
 
     MPI_Init(&argc, &argv);
+    selectDevice();
 
     lpReal_t breakTime = arguments.getArg<lpReal_t >("general.breakTime").value_or(10.0);
     lpReal_t dt = arguments.getArg<lpReal_t >("general.dt").value_or(0.0001);
@@ -558,6 +561,7 @@ int main(int argc, char *argv[]) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     auto iterStart = std::chrono::steady_clock::now();
+
 
     while (hiDem.run()) {
 
