@@ -16,7 +16,7 @@ The [Random data](#random-data) section presents how to generated an array of ra
 
 How to access dynamic variables from some functions is presented in the [Dynamic variables](#dynamic-variables) section.
 
-Finally the last section, [Iterate over particles / links outside HiDEMLib](#iterate-over-particles--links-outside-hidemlib), covers the helper functions that exsist in case you want to build your own functions that iterate over the particles and / or links.
+Finally the last section, [Iterate over particles / links outside HiDEMLib](#iterate-over-particles--links-outside-hidemlib), covers the helper functions that exist in case you want to build your own functions that iterate over the particles and / or links.
 
 # Arguments
 
@@ -57,13 +57,13 @@ The goal is that all functions described here should be stable between updates o
 
 The timestep of HiDEM is essentially 5 steps:
 - Call the grid service function, that will update the grid and other acceleration things as needed 
-- Compute forces between neighbouring particles
+- Compute forces between neighboring particles
 - Compute forces between linked particles
 - Apply the forces computed to the particles and move them, as well as apply any external force, boundary conditions etc.
 - Update the links based on the new particle positions, alternatively update and regenerate links
 
 From the codes standpoint the computation of forces from linked and neighboring particles are merged into one iteration over the particles.
-A basic in the code timestep looks as follows:
+A basic in the code time step looks as follows:
 
 ```c++
 hiDem.gridService
@@ -73,7 +73,7 @@ hiDem.linkUpdate
 hiDem.finalizeTs
 ```
 
-If you dont want to start breaking links from the start add an if statement around linkUpdate. And the full sample code has some additional code added for timing the timestep.
+If you dont want to start breaking links from the start add an if statement around linkUpdate. And the full sample code has some additional code added for timing the time step.
 
 ```c++
 while (hiDem.run()) {
@@ -86,7 +86,7 @@ while (hiDem.run()) {
 
 ## Adding data to particles/links
 
-The particle and link data structures used by HiDEM can easily be extended in case you want to add some extra variables to either the particles or the links. The idea behind how it is done is the same for both, you define your own class that inhereits from the HiDEMParticle/LinkData class, you add your new ManVec to it with the appropriate type, and then you need to provide new functions that specify what the fields are used as, more details on how that works below.
+The particle and link data structures used by HiDEM can easily be extended in case you want to add some extra variables to either the particles or the links. The idea behind how it is done is the same for both, you define your own class that inherits from the HiDEMParticle/LinkData class, you add your new ManVec to it with the appropriate type, and then you need to provide new functions that specify what the fields are used as, more details on how that works below.
 
 ### HiDEMParticleData
 
@@ -128,7 +128,7 @@ The particle and link data structures used by HiDEM can easily be extended in ca
 
 You can use any of these for your functions in main. 
 
-If you want to add new fields you should create your own Particle data class that inherits from `HiDEMParticleData`, you will then need to define both a `getFieldTupleInput` and `getFieldTupleOutput` function. These shoudl return a call to `packVecPtrs` for the fields you use, the `getFieldTupleInput` should be the fields that are persistent between iterations and `getFieldTupleOutput` should be the fields where the result can be discarded between iterations and will not be stored in checkpoints (in practice the difference is just that the oputput fields are not maintained if the particle data needs to be resized or reshuffled). 
+If you want to add new fields you should create your own Particle data class that inherits from `HiDEMParticleData`, you will then need to define both a `getFieldTupleInput` and `getFieldTupleOutput` function. These should return a call to `packVecPtrs` for the fields you use, the `getFieldTupleInput` should be the fields that are persistent between iterations and `getFieldTupleOutput` should be the fields where the result can be discarded between iterations and will not be stored in checkpoints (in practice the difference is just that the output fields are not maintained if the particle data needs to be resized or reshuffled). 
 
 The fnctions defined in `HiDEMParticleData` looks as follows
 ```c++
@@ -150,7 +150,7 @@ The fnctions defined in `HiDEMParticleData` looks as follows
 
 To define your own, just copy these to your own data class and add the fields you added to the call to `packVecPtrs`, the order of fields in the call are irrelevant.
 
-Additionally if the data you added needs to be initialized to a specific value you will need to add your own particle intiialization function. This can also be used if you want to change how data is initialized, just create a new data calss that just overwrites the `processInitParticle` function, however the recomended way to do things like settining an initial veloctiy would be to add an iteration pass over all the particles before the simulation starts, check the [Iterate over particles / links](Iterate-over-particles-/-links) heading.
+Additionally if the data you added needs to be initialized to a specific value you will need to add your own particle initialization function. This can also be used if you want to change how data is initialized, just create a new data class that just overwrites the `processInitParticle` function, however the recommended way to do things like setting an initial velocity would be to add an iteration pass over all the particles before the simulation starts, check the [Iterate over particles / links](Iterate-over-particles-/-links) heading.
 
 The processInitParticle looks as follows in `HiDEMParticleData`:
 
@@ -190,7 +190,7 @@ The processInitParticle looks as follows in `HiDEMParticleData`:
     }
 ```
 
-This function is called as part of the setup of the code to initialize the particle data, yhe user does not need to call it separately.
+This function is called as part of the setup of the code to initialize the particle data, the user does not need to call it separately.
 
 ### HiDEMLinkData
 
@@ -234,7 +234,7 @@ And again you need do define functions that dictate what the fields are used for
     }
 ```
 
-And as with the particles the fields for the links need to be initialized. To initialize the data for the particle ends you need to get the side indexes, these are available at `lData.sideIndEndA[outInd]` and `lData.sideIndEndB[outInd]`, you can then use these to set the values at the link ends. For more dynamic intialization of link data check the [Iterate over particles / links](#iterate-over-particles--links) heading.
+And as with the particles the fields for the links need to be initialized. To initialize the data for the particle ends you need to get the side indexes, these are available at `lData.sideIndEndA[outInd]` and `lData.sideIndEndB[outInd]`, you can then use these to set the values at the link ends. For more dynamic initialization of link data check the [Iterate over particles / links](#iterate-over-particles--links) heading.
 
 ```c++
     DEVCALLABLE
@@ -291,9 +291,9 @@ hiDem.setup(arguments, scale);
 
 ## Accesing data
 
-Whe you delcare `HiDEMLib` in your main file you need to give it the particle and link datatypes you use as template arguments.
+When you declare `HiDEMLib` in your main file you need to give it the particle and link datatypes you use as template arguments.
 
-After HiDEMLib has been initialized you can retrive pointers to the resulting Link and Particle data. These will actually not be HiDEMParticleData and HiDEMLinkData, nor whatever custom classes you passed in, but instead they will be pointers to a `ParticleDataHandler` and `LinkDataHandler`, in practice these are classes that inherit from whatever was fed in when declaring `HiDEMLib`. From the point of the user it does not really matter you can refer to them as HiDEMParticle/LinkData or your custom data classes. It is easiest to just declare these as `auto`, if you further want to simplify your code you can also assign the values to a refernce if you directly dereference the pointer.
+After HiDEMLib has been initialized you can retrieve pointers to the resulting Link and Particle data. These will actually not be HiDEMParticleData and HiDEMLinkData, nor whatever custom classes you passed in, but instead they will be pointers to a `ParticleDataHandler` and `LinkDataHandler`, in practice these are classes that inherit from whatever was fed in when declaring `HiDEMLib`. From the point of the user it does not really matter you can refer to them as HiDEMParticle/LinkData or your custom data classes. It is easiest to just declare these as `auto`, if you further want to simplify your code you can also assign the values to a reference if you directly de-reference the pointer.
 
 ```c++
 auto &pData = *hiDem.getParticlePtr();
@@ -325,7 +325,7 @@ Additionally the lambda function captures the environment by value so any scalar
 
 ## Force compute
 
-The most complex part is how the neighbour and link forces are computed, again look at the provided samples and see if there is anything for you already there.
+The most complex part is how the neighbor and link forces are computed, again look at the provided samples and see if there is anything for you already there.
 
 The function called every iteration is:
 
@@ -335,12 +335,12 @@ void HiDEMLib::computePartForce(NFunc &neighbourForceFunc, LFunc &linkForceFunc,
                       std::tuple<NeighArgs...> neighArgs, std::tuple<LinkArgs...> linkArgs, std::tuple<LinkSideArgs...> linkSideArgs, std::tuple<ForceArgs...> forceArgs
 ```
 
-A function taking 6 different templated arguments. The first one is the function to apply when computing forces between neighbours, the second the function for forces between linked particles. 
-The rest of the arugments are tuples containing the arguments to use for the neigbour and link functions. The basic idea is you choose what arguments the force functions will get by passing different partricle and link data fields to these. These tuples can be easily constructed with the `packVecPtrs` function.
+A function taking 6 different templated arguments. The first one is the function to apply when computing forces between neighbors, the second the function for forces between linked particles. 
+The rest of the arguments are tuples containing the arguments to use for the neighbor and link functions. The basic idea is you choose what arguments the force functions will get by passing different particle and link data fields to these. These tuples can be easily constructed with the `packVecPtrs` function.
 
 The first tuple represents the fields that will be taken from both particles when computing the neighbor force or the link force. 
 The second and third one are only passed to the link force function the second one is what value to grab from the link.
-The third one is the value to grab from the current side of the link, and wil be writable.
+The third one is the value to grab from the current side of the link, and will be writable.
 And finally the forth one is the value that will be grabbed from only the current particle that the force is computed for, these will be writable as well.
 
 If you dont need any field from some of these you can just call `packVecPtrs` with no arguments, so if you don't need to know the link length the second one can be replaced with `packVecPtrs()`.
@@ -359,10 +359,14 @@ hiDem.computePartForce(neighbourForceFunc, linkForceFunc,
 ```
 
 The fields fed into the tuples directly affects what values are passed to the `NFunc` and `LFunc` functions. 
+
+To simplify the code there are default versions of both the neighbor and link force functions defined in the `Common/HiDEMDefaultFunctions.h` header file, 
+for more details of how these are used look at the [Default force functions](#default-force-functions) section.
+
 Both of these functions automatically get, a mask argument passed to them as well as the x,y,z distance between the two particles.
 for the above example their definitions would look as follows (linebreaks added for clarity):
 
-The neighbour force function, defined as a lambda, you can capture by value, `[=]` but not by reference, the `DEVCALLABLE` macro is also needed for the code to be compilable for running on a GPU. The `REALT_TEMPL` macro currently does nothing but will be needed for the SIMD version of the code.
+The neighbor force function, defined as a lambda, you can capture by value, `[=]` but not by reference, the `DEVCALLABLE` macro is also needed for the code to be compilable for running on a GPU. The `REALT_TEMPL` macro currently does nothing but will be needed for the SIMD version of the code.
 
 ```c++
 auto neighbourForceFunc = [=] DEVCALLABLE REALT_TEMPL (
@@ -463,11 +467,40 @@ hiDem.computePartForce(neighbourForceFunc, linkForceFunc,
                        packVecPtrs(pData.xForce, pData.yForce, pData.zForce));
 ```
 
+### Default force functions
+
+To simplify the main function, and to avoid repeating the same code in all the samples there are default neighbor and link force functions defined in the `Common/HiDEMDefaultFunctions.h` header file. These can be used instead of the lambda functions defined in the main function in the case where you just want the default force functions for the neighbor and link forces. To make these compatible with the GPU compilers they are defined in a bit more complex manner than the lambda versions of the same functions, however the interfaces essentially looks as follows:
+
+```c++
+    HiDEMDefNeighForceFunc(lpReal_t invDt, lpReal_t attractDistance, lpReal_t attractScaleForce, lpReal_t damping, lpReal_t dampingRotation, lpReal_t scaleE)
+```
+
+```c++
+    HiDEMDefLinkForceFunc(lpReal_t invDt, lpReal_t damping, lpReal_t dampingRotation, lpReal_t E, lpReal_t W2, lpReal_t W4, lpReal_t G)
+```
+
+These can then be passed to `computePartForce` as follows:
+
+```c++
+<...>
+    hiDem.computePartForce(
+        HiDEMDefNeighForceFunc(invDt, attractDistance, attractScaleForce, damping, dampingRotation, scaleE),
+        HiDEMDefLinkForceFunc(invDt, damping, dampingRotation, E, W2, W4, G),
+            packVecPtrs(pData.xDiff, pData.yDiff, pData.zDiff,
+                        pData.uDiff, pData.vDiff, pData.wDiff, pData.radius),
+            packVecPtrs(),
+            packVecPtrs(lData.CT0_flat, lData.CT1_flat, lData.CT2_flat,
+                        lData.CT3_flat, lData.CT4_flat, lData.CT5_flat),
+            packVecPtrs(pData.xForce, pData.yForce, pData.zForce,
+                        pData.uForce, pData.vForce, pData.wForce));
+<...>
+```
+
 ## Update links
 
-Updating links works broadly in the same way as the neighbour and link force calculation, you feed in a bunch tuple of pointers and the function updating the links will be called with values extracted from those pointers for the current link.
+Updating links works broadly in the same way as the neighbor and link force calculation, you feed in a bunch tuple of pointers and the function updating the links will be called with values extracted from those pointers for the current link.
 
-For updating links there are two possible functions that can be used the normal `linkUpdate` function for just breaking links, and then `linkUpdateRegen` for being able to break and recrate links. The difference between them, is that in `linkUpdate` if the state is changed it is never intended to be changed back, i.e. once a link is broken it is permanently broken, whereas with `linkUpdateRegen` the state of the links can be changed back, so a link that gets set to zero can be reenabled. 
+For updating links there are two possible functions that can be used the normal `linkUpdate` function for just breaking links, and then `linkUpdateRegen` for being able to break and recreate links. The difference between them, is that in `linkUpdate` if the state is changed it is never intended to be changed back, i.e. once a link is broken it is permanently broken, whereas with `linkUpdateRegen` the state of the links can be changed back, so a link that gets set to zero can be re-enabled. 
 
 The function called every iteration for the basic link update that only breaks links looks as follows as follows:
 
@@ -495,11 +528,30 @@ hiDem.linkUpdate(breakLinks,
              packVecPtrs(lData.state, lData.initialLen));
 );
 ```
-The first tuple names what argments to fetch from the particles at each end of the link from the particle data, the second what data to fetch from each side of the link from the link data, and finally the least one is what data to fetch for each link.
+The first tuple names what arguments to fetch from the particles at each end of the link from the particle data, the second what data to fetch from each side of the link from the link data, and finally the least one is what data to fetch for each link.
+
+### Default link break function
+
+As with the neighbor and link force function there is a default link break function defined in the `Common/HiDEMDefaultFunctions.h` header file. Currently this is only for the basic link breaking, so for instace there is no default link regeneration function defined in the header.
+
+The interface looks as follows:
+
+```c++
+    HiDEMDefLinkBreakFunc(lpReal_t bendBreak, lpReal_t maxLoad)
+```
+
+This can then be passed to `linkUpdate` as follows:
+
+```c++
+    hiDem.linkUpdate(HiDEMDefLinkBreakFunc(bendBreak, maxLoad),
+        packVecPtrs(pData.xCord, pData.yCord, pData.zCord, pData.xTheta, pData.yTheta, pData.zTheta),
+        packVecPtrs(),
+        packVecPtrs(lData.state, lData.initialLen));
+```
 
 ### Regenerating links
 
-Regenerating link also reqires linkRegen to also be enabled in the configuration file.
+Regenerating link also requires linkRegen to also be enabled in the configuration file.
 
 ```toml
 [linkRegen]
@@ -549,21 +601,24 @@ An example update links function that does regeneration:
     };
 ```
 
+# Time integration
 
-# Geometry functions
+## Default common functions
+
+## Geometry functions
 
 // todo provide intro here
-Geometry is the other thing you want the particles to run into. Currently two types are supported, a basic DEM based bed and a mesh, how to set these up in the input file is covered in [Input.md](Input.md), this section will only conver how to interact with them from the code side.
+Geometry is the other thing you want the particles to run into. Currently two types are supported, a basic DEM based bed and a mesh, how to set these up in the input file is covered in [Input.md](Input.md), this section will only cover how to interact with them from the code side.
 
-## Bed
+### Bed
 
-If you have the bed configured correctly in the input config file you can retrive the bed object from HiDEMLib using:
+If you have the bed configured correctly in the input config file you can retrieve the bed object from HiDEMLib using:
 
 ```c++
 auto bed = hiDem.getBedPtrs();
 ```
 
-The bed project then has two function one to get the height of the bed at a given x and y coordinate and then one function to get the friction at a given x and y coordnate.
+The bed project then has two function one to get the height of the bed at a given x and y coordinate and then one function to get the friction at a given x and y coordinate.
 
 ```c++
 DEVCALLABLE
@@ -589,19 +644,19 @@ if ((zCord + radius) - bedzCord < bedInteract) { // should be - radius ?
 }
 ```        
 
-## Mesh
+### Mesh
 
 **This is a "feature preview" and is subject to change**
 
-If you have some collision meshes configured properly you can retrive a combined mesh object from HiDEMLib using the `getCollisionMeshPtr` function. This will return a mesh object that includes all the meshes defined in collisionGeometry in the config file. Once retrived you need to generate an acceleration structure for the mesh using `generateAccel` that takes as an argument the search distance to use, a good part to start from is what is used in the example below, that is twice the particle radius
+If you have some collision meshes configured properly you can retrieve a combined mesh object from HiDEMLib using the `getCollisionMeshPtr` function. This will return a mesh object that includes all the meshes defined in collisionGeometry in the config file. Once retrieved you need to generate an acceleration structure for the mesh using `generateAccel` that takes as an argument the search distance to use, a good part to start from is what is used in the example below, that is twice the particle radius
 
 ```c++
-InputMesh* mesh = hiDem.getCollisionMeshPtr();
+CollisionMesh* mesh = hiDem.getCollisionMeshPtr();
 
 mesh->generateAccel(hiDem.geometry.maxRadius*2);
 ```
 
-Interaction between the partcles and the mesh would be done in `applyForce`, each particle calling `closestTriFun` which will then call the supplied lambda for the face closest to the particle if the particle is close enough to interact. The function takes the x,y,z cordinates of the current particle, the distance at which interaction can happen and the particle index. The lambda function then gets called with the index of the closest triangle and the actual distance to it from the point given. 
+Interaction between the particles and the mesh would be done in `applyForce`, each particle calling `closestTriFun` which will then call the supplied lambda for the face closest to the particle if the particle is close enough to interact. The function takes the x,y,z coordinates of the current particle, the distance at which interaction can happen and the particle index. The lambda function then gets called with the index of the closest triangle and the actual distance to it from the point given. 
 
 You can use this to compute any forces on the particle from the triangle, if you want to save the force on the triangle the mesh class has a function called `addForce` that takes the triangle index and the force to add, currently only x,y,z force is supported.
 The actual code provided in the example is illustrative and not necessarily an accurate implementation of the physics of the collision.
@@ -622,9 +677,9 @@ mesh->closestTriFun(xCord,yCord, zCord, bedInteract, pInd, [&] (int tri, lpReal_
 
 If you add forces to the mesh you need to zero them yourself, this is done simply by calling `zeroForce()` on the mesh object.
 
-# External force
+## External force
 
-If external forces are set up properly in the inout file you can retrive a pointer to the `ExternalForces` object from HiDMELIb using:
+If external forces are set up properly in the input file you can retrieve a pointer to the `ExternalForces` object from HiDMELIb using:
 
 ```c++
 ExternalForces *extForcePtr = hiDem.getExternalForcePtr();
@@ -641,9 +696,38 @@ vForce += extForcePtr->vForce->interp(xCord, yCord);
 wForce += extForcePtr->wForce->interp(xCord, yCord);
 ```
 
+# Dynamic variables
+
+To access dynamically changing variables in any of the functions in the time step loop these need to be enclosed inside a `DynamicVariable` class, this holds one variable, and must be allocated with new.
+
+Currentrly the code only uses and supports passing around these to the `applyForce` function, and only really currently usable for getting access to the current time step. As such there is a helper function, `getTimeStep` to directly get the `DynamicVariable` object for the time step from `HiDEMLib`, and in that case the value will be updated by the internals of `HiDEMLib`.
+
+In `HiDEMLib` the function for getting the time step as a dynamic variable looks as follows
+```c++
+DynamicVariable<int> &getTimeStep()
+```
+
+A shortened example using the current timestep in the `applyForce` function. The XXX sample illustrates how to utilize it in more detail.
+
+```c++
+    auto applyForce = [=] DEVCALLABLE(
+        pInd_t pInd, HiDEMParticleData &pData, DynamicVariable<int> &timeStep) {
+        int ts = timeStep.get();
+        ...
+    }
+    ...
+
+    while (hiDem.run()) {
+        ...
+        hiDem.applyForce(applyForce, hiDem.getTimeStep());
+        ...
+    }
+```
+
+
 # Random data
 
-In order to generate random data to be used by different parts of the code you can create a `BulkRandom` object. The obect takes a template argument for what data type to generate.
+In order to generate random data to be used by different parts of the code you can create a `BulkRandom` object. The object takes a template argument for what data type to generate.
 
 On the bulk random object you need to set the size using
 ```c++
@@ -656,7 +740,7 @@ And then generate the data using
 void reGenerate()
 ```
 
-If the data is used in every timestep the `reGenerate` function needs to be called every iteration.
+If the data is used in every time step the `reGenerate` function needs to be called every iteration.
 
 To get the vector of random data out of the `BulkRandom` object use the `getVec` function, or just directly access the `values` member.
 
@@ -695,39 +779,12 @@ while (hiDem.run()) {
 }
 ```
 
-# Dynamic variables
-
-To access dynamically chaning variables in any of the functions in the timestep loop these need to be enclosed inside a `DynamicVariable` class, this holds one variable, and must be allocated with new.
-
-Currentrly the code only uses and supports passing around these to the `applyForce` function, and only really currently useable for getting access to the current time step. As such there is a helper function, `getTimeStep` to directly get the `DynamicVariable` object for the timestep from `HiDEMLib`, and in that case the value will be updated by the internals of `HiDEMLib`.
-
-In `HiDEMLib` the function for getting the timestep as a dynamic variable looks as follows
-```c++
-DynamicVariable<int> &getTimeStep()
-```
-
-A shortened example using the current timestep in the `applyForce` function. The XXX sample illustrates how to utilize it in more detail.
-
-```c++
-    auto applyForce = [=] DEVCALLABLE(
-        pInd_t pInd, HiDEMParticleData &pData, DynamicVariable<int> &timeStep) {
-        int ts = timeStep.get();
-        ...
-    }
-    ...
-
-    while (hiDem.run()) {
-        ...
-        hiDem.applyForce(applyForce, hiDem.getTimeStep());
-        ...
-    }
-```
 
 # Iterate over particles / links outside HiDEMLib
 
 ## Particles
 
-If you want to have additonal passes of iterating over the particles or links, for instance to apply some initial condition or compute some statisitcs at the output steps there are a few helper functions that will simplify the process. Note that these are not intended to be used every iteration they will not do all the fancy under the hood optimizations that the functions described above. The functions to iterate particles and links come in two variaties, iterating all elements on a rank or iterating just the owned ones, generally you probably want to iterate just the owned elements, that will exclude the halo elements each rank has that are actually owned bu some other rank.
+If you want to have additional passes of iterating over the particles or links, for instance to apply some initial condition or compute some statistics at the output steps there are a few helper functions that will simplify the process. Note that these are not intended to be used every iteration they will not do all the fancy under the hood optimizations that the functions described above. The functions to iterate particles and links come in two variates, iterating all elements on a rank or iterating just the owned ones, generally you probably want to iterate just the owned elements, that will exclude the halo elements each rank has that are actually owned bu some other rank.
 
 To iterate over the partiles use the iterateOwned particles from the `ParticleData` class (or any class inheretingn from it):
 
@@ -771,5 +828,5 @@ The lambda function applied to each link gets called with the link index, and th
 ### Links for a given particle
 // todo will be added later
 
-### Neighbours for a given particle
+### Neighbors for a given particle
 // todo will be added later

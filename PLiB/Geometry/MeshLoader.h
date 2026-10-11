@@ -74,7 +74,7 @@ public:
                 });
 
                 std::array<Real3, 3> vtxes;
-                std::array<Real3, 3> vtxsNormals;
+                // std::array<Real3, 3> vtxsNormals;
                 int i = 0;
 
                 splitStringDelims(endStr, " ", [&](std::string token) {

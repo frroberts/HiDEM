@@ -33,7 +33,7 @@ public:
         Map2d<T> *ret = new Map2d<T>(xPoints, yPoints, xMin, yMin, xMax, yMax);
 
         assert(xPoints*yPoints == columns.at(ind).size());
-        for (int i = 0; i < columns[0].size(); i++) {
+        for (size_t i = 0; i < columns[0].size(); i++) {
             ret->setPointCord(columns.at(0).at(i), columns.at(1).at(i), columns.at(ind).at(i));
         }
         return ret;

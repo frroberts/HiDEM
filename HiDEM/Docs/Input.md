@@ -113,6 +113,9 @@ checkpointInterval = 1000
 checkpointDirectory = "checkpoints"
 # append timestep to filename, if false it will only keep one file
 timestepCheckpoint = true
+# keep the old checkpoint when writing a new one, will only keep one old copy of each checkpoint
+# old checkpoints are renamed as <checkpoint name>_old.h5
+keepOld = false
 ```
 
 # Lattice types

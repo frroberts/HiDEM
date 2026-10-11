@@ -37,6 +37,10 @@ void reorderDevVec(ManVec<T> &v, ManVec<Tind> &order, OffloadExec policy = Offlo
     Tind * order_ptr = order.data();
 
     Iterator::iterate(policy, [=] DEVCALLABLE (Tind ind) {
+        // skip cases where the index is -1, i.e. do not care about placement
+        if (order_ptr[ind] == -1)
+            return;
+
         ret_ptr[ind] = v_ptr[order_ptr[ind]];
     }, v.size());
     Iterator::syncAll();
@@ -51,6 +55,9 @@ template< class T, class Tind, class TScratch>
 void reorderDevVecScratch(ManVec<T> &v, ManVec<Tind> &order, ManVec<TScratch, ScratchAllocator<TScratch>> &scratch, OffloadExec policy = OffloadExec() )  {
     xvtxRangePush("reorder dev vec scratch");
 
+    // fail if scratch spae is not byte allocated
+    static_assert(sizeof(TScratch) == 1);
+
     // ability to reuse the same scratch buffer as temp storage
     if(v.size() != order.size()){
         std::cout << "incorrect reorder " << std::endl;
@@ -58,7 +65,7 @@ void reorderDevVecScratch(ManVec<T> &v, ManVec<Tind> &order, ManVec<TScratch, Sc
         raise(SIGINT);
         exit(1);
     }
-    size_t sizeInScratch = v.size()*(static_cast<float>(sizeof(T))/static_cast<float>(sizeof(TScratch)));
+    size_t sizeInScratch = v.size()*sizeof(T);
     scratch.resize(sizeInScratch, false);
 
     T* v_ptr = v.data();
@@ -66,6 +73,10 @@ void reorderDevVecScratch(ManVec<T> &v, ManVec<Tind> &order, ManVec<TScratch, Sc
     Tind * order_ptr = order.data();
 
     Iterator::iterate(policy, [=] DEVCALLABLE (Tind ind) {
+        // skip cases where the index is -1, i.e. do not care about placement
+        if (order_ptr[ind] == -1)
+            return;
+
         ret_ptr[ind] = v_ptr[order_ptr[ind]];
     }, v.size());
     Iterator::syncAll();

@@ -127,8 +127,15 @@ cd build
 cmake -DENABLE_SIMD=0 -DENABLE_CUDA=1 -DENABLE_GDR=1 ..
 make -j HiDEM
 ```
-
 In case your MPI library is very very old and does not support GPU aware MPI set `-DENABLE_GDR` to 0.
+
+### GPU Architecture tuning
+
+For Nvidia GPUs there are some architecture specific tuning that can be done,
+currently the code has specific tuning for compute capability 90, 120, and a generic tune for the rest of them.
+
+To build for the generic architecture you do not need to pass any additional flags.
+To build for one of the supported architectures pass `-DGPU_ARCH=120` RTX5000 series, or `-DGPU_ARCH=90` (Grace) Hopper architectures. 
 
 ## AMD GPU support om LUMI
 

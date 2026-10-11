@@ -28,7 +28,6 @@ public:
 #if defined(GPU) && !defined(ENABLE_GDR)
     gKey_t* globalKeysPtr_host;
 
-    // ManVec<gKey_t, PinnedAllocator<gKey_t>> globalKeys_host;
 #endif
 
 };
@@ -194,7 +193,7 @@ public:
             });
         }
 
-        for (int t = 0; t < targetsOut.size(); ++t) {
+        for (size_t t = 0; t < targetsOut.size(); ++t) {
             if (outTargets[t].count == 0)
                 continue;
 

@@ -5,15 +5,11 @@
 #ifndef PHELL_HIDEMPARTICLEDATA_H
 #define PHELL_HIDEMPARTICLEDATA_H
 
-#include <math.h>
 #include <Global.h>
 
 #include "TupleHelpers.h"
-#include <GlobalLocalMapper.h>
 #include <ManVec.h>
 #include <ParticleData.h>
-
-#include "Util/OwnedListGen.h"
 
 #include "Generators/ElementaryParticle.h"
 

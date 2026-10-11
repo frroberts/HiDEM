@@ -10,11 +10,11 @@ set(TESTER_FILES_MPI
 
 if (ENABLE_CATCH)
     add_executable(Tester testMain.cpp
+            TestHelpers.h
+            TestHelpers.cpp
             # IteratorTester.cpp
-            # TestHelpers.h
             # ParticleDataTester.cpp
-            # TestHelpers.cpp
-            # NeighbourGridTester.cpp
+            NeighbourGridTester.cpp
             # Map2DTester.cpp
             # ParticleGeneratorTester.cpp
             # GeometryLoaderTester.cpp
@@ -39,7 +39,7 @@ if (ENABLE_CATCH)
             # UnitBlockGeneratorTester.cpp
             # VTUOutTester.cpp
             # SimdTester.cpp
-            # GlobalLocalMappterTest.cpp
+            GlobalLocalMappterTest.cpp
             # HiDEMCheckpointTester.cpp
             # Map2DTester.cpp
     )
@@ -83,7 +83,8 @@ if (ENABLE_CATCH)
                 Tests/LinkGeneratorTester.cpp
                 Tests/CommunicatorTesterSingle.cpp
                 Tests/TransporterTester.cpp
-                Tests/HDF5ReadWriteTest.cpp
+                TestHelpers.cpp
+                NeighbourGridTester.cpp
                 BalancerTester.cpp
                 GlobalLocalMappterTest.cpp
                 HiDEMCheckpointTester.cpp

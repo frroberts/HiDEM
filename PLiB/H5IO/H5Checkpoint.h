@@ -15,10 +15,8 @@
 
 class H5Checkpoint {
 
-protected:
-    HDF5IO h5;
-
 public:
+    HDF5IO h5;
 
 
     H5Checkpoint() {
@@ -150,7 +148,7 @@ public:
         std::vector<Domain> allDomains;
         allDomains.resize(owner.size());
 
-        for (int i = 0; i < owner.size(); ++i) {
+        for (size_t i = 0; i < owner.size(); ++i) {
             Domain d;
             d.lower.x = domainLowerX[i];
             d.lower.y = domainLowerY[i];

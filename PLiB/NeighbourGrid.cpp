@@ -16,43 +16,61 @@
 
 #ifdef GPU
 #include "DevPortabilityLayer.h"
+#include <thrust/unique.h>
+#include <thrust/execution_policy.h>
+
 #endif
 
 DEVCALLABLE
-int NeighbourGrid::getGridColor(int x, int y, int z) {
-    return ((x))+((y) * xGridSize) + ((z) * xGridSize * yGridSize);
+int64_t NeighbourGrid::getGridColor(int x, int y, int z) {
+    return (static_cast<int64_t>(x)) + ((static_cast<int64_t>(y)) * static_cast<int64_t>(xGridSize)) +
+        ((static_cast<int64_t>(z)) * static_cast<int64_t>(xGridSize) * static_cast<int64_t>(yGridSize));
 }
 
 DEVCALLABLE
 std::tuple<double, double, double> NeighbourGrid::getGridId(double x, double y, double z) {
-    return std::make_tuple((int)std::floor((x - xMin) / gridSpacing), (int)std::floor((y - yMin) / gridSpacing), (int)std::floor((z - zMin) / gridSpacing));
+    return std::make_tuple((int) std::floor((x - xMin) / gridSpacing), (int) std::floor((y - yMin) / gridSpacing), (int) std::floor((z - zMin) / gridSpacing));
 }
 
 DEVCALLABLE
-int NeighbourGrid::getPraticleColor(pInd_t pInd)
-{
+int64_t NeighbourGrid::getParticleColor(pInd_t pInd) {
     return colours[pInd];
 }
 
 std::tuple<double, double, double> NeighbourGrid::getGridSize(double x, double y, double z) {
-    //
-    //std::cout << x << " " << y << " " << z << std::endl;
-    int xGridS = 1 + (int)std::floor((x) / gridSpacing);
-    int yGridS = 1 + (int)std::floor((y) / gridSpacing);
-    int zGridS = 1 + (int)std::floor((z) / gridSpacing);
-
-    //int blockSize = 4;
-    // pad for block size
-    //xGridSize += blockSize + (xGridSize % blockSize);
-    //yGridSize += blockSize + (yGridSize % blockSize);
-    //zGridSize += blockSize + (zGridSize % blockSize);
+    int xGridS = 1 + (int) std::floor((x) / gridSpacing);
+    int yGridS = 1 + (int) std::floor((y) / gridSpacing);
+    int zGridS = 1 + (int) std::floor((z) / gridSpacing);
 
     return std::make_tuple(xGridS, yGridS, zGridS);
 }
 
-void NeighbourGrid::generateNeighbourGrid(ParticleData &data)
-{
-    //
+void NeighbourGrid::generate(ParticleData &pData, double searchDistance) {
+    xvtxRangePush("grid regen");
+
+    gridSpacing = searchDistance;
+    generateNeighbourGrid(pData);
+    colourParticles(pData);
+    generateIterationList(pData);
+
+
+    int maxVolume;
+    int minVolume;
+    int maxUsed;
+    int minUsed;
+    int ownUsed = colorOffset.numActive();
+    MPI_Reduce(&ownUsed, &minUsed, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&ownUsed, &maxUsed, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&totalCells, &minVolume, 1, MPI_INT, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&totalCells, &maxVolume, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    Logger::writeAtFirst(fmt::format("Grid regen out: min volume {} max volume {}, max active cells {} \n", minVolume, maxVolume, maxUsed), true);
+
+    xvtxRangePop();
+}
+
+void NeighbourGrid::generateNeighbourGrid(ParticleData &data) {
+    xvtxRangePush("generateNeighbourGrid");
 
     auto [_xMax, _yMax, _zMax, _xMin, _yMin, _zMin] = data.getLimits();
 
@@ -62,160 +80,210 @@ void NeighbourGrid::generateNeighbourGrid(ParticleData &data)
     xMin = _xMin;
     yMin = _yMin;
     zMin = _zMin;
-    //std::cout << xMax << " " << yMax << " " << zMax << " ";
-    //std::cout << xMin << " " << yMin << " " << zMin << std::endl;
 
-    auto [_xGridSize, _yGridSize, _zGridSize] = getGridSize(xMax-xMin, yMax-yMin, zMax-zMin);
+    auto [_xGridSize, _yGridSize, _zGridSize] = getGridSize(xMax - xMin, yMax - yMin, zMax - zMin);
     xGridSize = _xGridSize;
     yGridSize = _yGridSize;
     zGridSize = _zGridSize;
 
     int prevTotalCells = totalCells;
-    totalCells = xGridSize*yGridSize*zGridSize;
-    if ((prevTotalCells != 0) && ((totalCells/10) > prevTotalCells)) {
+    totalCells = xGridSize * yGridSize * zGridSize;
+    if ((prevTotalCells != 0) && ((totalCells / 10) > prevTotalCells)) {
         std::cout << getLocalRank() << " new (" << totalCells << ") grid 10x larger than old (" << prevTotalCells << ") , did something explode ?" << std::endl;
     }
     // if we get an empty domain set num cells to 0 to avoid crashing
-    if(data.numLocal == 0)
+    if (data.numLocal == 0)
         totalCells = 0;
     //std::cout << _xGridSize << " " << _yGridSize << " " << _zGridSize << " " << totalCells << std::endl;
+    xvtxRangePush("this 1");
 
-    targetBuckets.resize(totalCells*27, false);
-    numTargetBuckets.resize(totalCells, false);
-
-
-    Iterator::iterate3D(OffloadExec(), [] DEVCALLABLE (int x, int y, int z, NeighbourGrid &grid) {
-        int gridColor = grid.getGridColor(x, y, z);
-
-        int i = 0;
-        for (int zD = -1; zD < 2; zD++) {
-            for (int yD = -1; yD < 2; yD++) {
-                for (int xD = -1; xD < 2; xD++) {
-                    int xT;
-                    int yT;
-                    int zT;
-                    xT = x + xD;
-                    yT = y + yD;
-                    zT = z + zD;
-                    if (xT >= 0 && xT < grid.xGridSize && yT >= 0 && yT < grid.yGridSize && zT >= 0 && zT < grid.zGridSize) {
-                        int targetBucket = grid.getGridColor(xT, yT, zT);
-                        grid.targetBuckets[(gridColor) + (i * grid.totalCells)] = targetBucket;
-                        i++;
-                    } else {
-                        grid.targetBuckets[(gridColor) + (i * grid.totalCells)] = -1;
-                        i++;
-                    }
-                }
+    int i = 0;
+    for (int zD = -1; zD < 2; zD++) {
+        for (int yD = -1; yD < 2; yD++) {
+            for (int xD = -1; xD < 2; xD++) {
+                dirOffsets[i] = getGridColor(xD, yD, zD);
+                i++;
             }
         }
+    }
 
-        grid.numTargetBuckets[gridColor] = i;
-    }, xGridSize, yGridSize, zGridSize, *this);
     Iterator::syncAll();
+    xvtxRangePop();
+    xvtxRangePop();
 
 }
 
-void NeighbourGrid::colourParticles(ParticleData &data)
-{
-    //
+void NeighbourGrid::colourParticles(ParticleData &data) {
+    xvtxRangePush("colourParticles");
+    colorOffset.clear();
 
     colours.resize(data.numLocal, false);
-    bucketSizes.resize(totalCells, false);
-    bucketStarts.resize(totalCells, false);
+    coloursUniq.resize(data.numLocal, false);
 
-    data.iterateAllParticles(OffloadExec(), [] DEVCALLABLE (pInd_t pInd, ParticleData &data, NeighbourGrid &grid) {
-
+    data.iterateAllParticles(OffloadExec(), [=] DEVCALLABLE (pInd_t pInd, ParticleData &data, NeighbourGrid &grid) {
         //
-        auto[xGridCord, yGridCord, zGridCord] = grid.getGridId(data.xCord[pInd], data.yCord[pInd], data.zCord[pInd]);
+        auto [xGridCord, yGridCord, zGridCord] = grid.getGridId(data.xCord[pInd], data.yCord[pInd], data.zCord[pInd]);
         int colour = grid.getGridColor(xGridCord, yGridCord, zGridCord);
 
         grid.colours[pInd] = colour;
+        grid.coloursUniq[pInd] = colour;
     }, data, *this);
-
     Iterator::syncAll();
+    // sort uniq colors would get the count of colors
+    // bulk create map
 
-    Iterator::iterate(OffloadExec(), [] DEVCALLABLE (pInd_t i, NeighbourGrid &grid){
+    stx::sort(EXECPOLICY coloursUniq.begin(), coloursUniq.end());
+    auto newEnd = stx::unique(EXECPOLICY coloursUniq.begin(), coloursUniq.end());
+    auto numColors = std::distance(coloursUniq.begin(), newEnd);
+
+    coloursUniq.resize(numColors);
+
+    colorOffset.setSize(numColors);
+
+    colorOffset.bulkCreate(coloursUniq);
+
+    bucketSizes.resize(numColors, false);
+    bucketStarts.resize(numColors, false);
+
+    Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (pInd_t i, NeighbourGrid &grid) {
         grid.bucketSizes[i] = 0;
-        }, bucketSizes.size(), *this);
+    }, bucketSizes.size(), *this);
 
-    Iterator::iterate(OffloadExec(), [] DEVCALLABLE (pInd_t i, NeighbourGrid &grid){
-        int c = grid.colours[i];
-        //atomicAdd(&(bucketSizes[c]), 1);
+    Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (pInd_t i, NeighbourGrid &grid) {
+        int c = grid.colorOffset.getValue(grid.colours[i]);
         Atomic::atomicIncVal(grid.bucketSizes[c]);
-        }, colours.size(), *this);
-
+    }, colours.size(), *this);
+    Iterator::syncAll();
+    stx::exclusive_scan(EXECPOLICY bucketSizes.begin(), bucketSizes.end(), bucketStarts.begin(), 0);
 
     Iterator::syncAll();
-
-    ParallelScan::exclusive(bucketSizes, bucketStarts);
-    Iterator::syncAll();
-
+    xvtxRangePop();
 }
 
-void NeighbourGrid::generateIterationList(ParticleData &data)
-{
-        xvtxRangePush("generateIterationList");
+void NeighbourGrid::generateIterationList(ParticleData &data) {
+    xvtxRangePush("generateIterationList");
 
     iterationOrder.resize(data.numLocal, false);
     data.iterateAllParticles(OffloadExec(), []DEVCALLABLE(pInd_t pInd, ParticleData &data, NeighbourGrid &grid) {
         grid.iterationOrder[pInd] = pInd;
     }, data, *this);
-    Iterator::syncAll();
 
-    // sort iterationOrder based on colour
-    // todo add parallel stl here once its properly available
-    // todo does not really need to be sort, more a histogram of values and i know the bucket sizes
-    // look at how the renderer does it
     auto keyPtr = colours.data();
     stx::sort(EXECPOLICY iterationOrder.begin(), iterationOrder.end(),
-        [=] DEVCALLABLE (int a, int b) { return keyPtr[a] < keyPtr[b]; });
-
-    // set up the collected iteration orders here
-    bucketSizesColor.resize(totalCells, false);
-    bucketStartsColor.resize(totalCells, false);
-
-    Iterator::iterate(OffloadExec(),[] DEVCALLABLE (ind_t cell, NeighbourGrid &grid){
-        int particlesInColor = 0;
-        for (int n = 0; n < 27; ++n) {
-            int targetBucket = grid.targetBuckets[cell + (n * grid.totalCells)];
-            // skip if the bucket does not exist, i.e. if the target bucket is -1
-            if (targetBucket == -1)
-                continue;
-            particlesInColor += grid.bucketSizes[targetBucket];
+              [=] DEVCALLABLE (int a, int b) {
+        if (keyPtr[a] == keyPtr[b]) {
+            // check what the actual order here should be ?
+            return a < b;
         }
-        grid.bucketSizesColor[cell] = particlesInColor;
-        }, totalCells, *this);
+        return keyPtr[a] < keyPtr[b];
+    });
+
     Iterator::syncAll();
-    xvtxRangePush("a");
-
-    size_t sum = reducer.sum(bucketSizesColor);
-
-    stx::exclusive_scan(EXECPOLICY bucketSizesColor.begin(), bucketSizesColor.end(), bucketStartsColor.begin(), 0);
-
-    iterationOrderPerColor.resize(sum, false);
     xvtxRangePop();
 
+}
 
-    Iterator::iterate(OffloadExec(),[] DEVCALLABLE (ind_t cell, NeighbourGrid &grid){
-        int particlesInColor = 0;
-        for (int n = 0; n < 27; ++n) {
-            int targetBucket = grid.targetBuckets[cell + (n * grid.totalCells)];
-            // skip if the bucket does not exist, i.e. if the target bucket is -1
-            if (targetBucket == -1)
-                continue;
+void NeighbourGrid::reorder(ManVec<pInd_t> &order) {
+    reorderDevVec(colours, order);
+}
 
-            for (size_t i = grid.bucketStarts[targetBucket]; i < grid.bucketStarts[targetBucket] + grid.bucketSizes[targetBucket]; ++i) {
-                pInd_t nInd = grid.iterationOrder[i];
-                grid.iterationOrderPerColor[grid.bucketStartsColor[cell]+ particlesInColor] = nInd;
-                particlesInColor++;
-            }
+void NeighbourGrid::toVTKHDF(std::string fileName) {
+        HDF5IO io;
+        io.createFile(fileName, MPI_COMM_SELF);
+
+        io.openGroup("VTKHDF");
+        io.writeAttributeStr("Type", "UnstructuredGrid");
+        std::vector<long long int> version = {2, 2};
+        io.writeAttributeArr("Version", version);
+
+        ManVec<hpReal_t> points;
+        ManVec<int> connectivity;
+        ManVec<unsigned char> types;
+        ManVec<int> cellLoad;
+
+        int conn = 0;
+        int numCells = 0;
+        Iterator::iterate3D(SerialExec(), [&] (int x, int y, int z, NeighbourGrid &grid) {
+            int64_t gridColor = grid.getGridColor(x, y, z);
+
+            int64_t targetBucket = colorOffset.getValue(gridColor);
+            if (targetBucket == colorOffset.notFound())
+                return;
+
+            cellLoad.push_back(grid.bucketSizes[targetBucket]);
+
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            types.push_back(11);
+            numCells++;
+
+            points.push_back(grid.xMin + (x * grid.gridSpacing));
+            points.push_back(grid.yMin + (y * grid.gridSpacing));
+            points.push_back(grid.zMin + (z * grid.gridSpacing));
+
+            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
+            points.push_back(grid.yMin + (y * grid.gridSpacing));
+            points.push_back(grid.zMin + (z * grid.gridSpacing));
+
+            points.push_back(grid.xMin + (x * grid.gridSpacing));
+            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
+            points.push_back(grid.zMin + (z * grid.gridSpacing));
+
+            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
+            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
+            points.push_back(grid.zMin + (z * grid.gridSpacing));
+
+            points.push_back(grid.xMin + (x * grid.gridSpacing));
+            points.push_back(grid.yMin + (y * grid.gridSpacing));
+            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
+
+            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
+            points.push_back(grid.yMin + (y * grid.gridSpacing));
+            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
+
+            points.push_back(grid.xMin + (x * grid.gridSpacing));
+            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
+            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
+
+            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
+            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
+            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
+
+        }, xGridSize, yGridSize, zGridSize, *this);
+        Iterator::syncAll();
+
+        io.writeVectorAll2D(points, "Points", 3);
+        ManVec<long long int> NumberOfPoints;
+        NumberOfPoints.push_back(points.size()/3);
+        io.writeVectorFirst(NumberOfPoints, "NumberOfPoints");
+
+        ManVec<int> NumberOfConnectivityIds;
+        NumberOfConnectivityIds.push_back(numCells * 8);
+        io.writeVectorFirst(NumberOfConnectivityIds, "NumberOfConnectivityIds");
+
+        ManVec<int> NumberOfCells;
+        NumberOfCells.push_back(numCells);
+        io.writeVectorFirst(NumberOfCells, "NumberOfCells");
+
+        ManVec<int> Offsets;
+        for (int i = 0; i < numCells + 1; i++) {
+            Offsets.push_back((i) * 8);
         }
-    },totalCells, *this);
-    Iterator::syncAll();
-        xvtxRangePop();
+        io.writeVectorFirst(Offsets, "Offsets");
 
-}
+        io.writeVectorFirst(connectivity, "Connectivity");
+        io.writeVectorFirst(types, "Types");
 
-void NeighbourGrid::reoder(ManVec<pInd_t> &order){
-    reorderDevVec(colours,order);
-}
+        io.openGroup("CellData");
+        io.writeVectorFirst(cellLoad, "numParticles");
+        io.closeGroup();
+        io.closeGroup();
+
+        io.closeFile();
+    }

@@ -17,28 +17,21 @@
 #include "../Iterators/ParallelSort.h"
 #include "../Iterators/ParallelReduce.h"
 #include "H5IO/HDF5IO.h"
+#include "Logger/Logger.h"
 
 
 class NeighbourGrid : public ManagedParent {
 public:
 
-    //DevVec<int> gridX;
-    //DevVec<int> gridY;
-    //DevVec<int> gridZ;
-    ManVec<size_t> offsets;
-    ManVec<int> targetBuckets;
-    ManVec<int> numTargetBuckets;
-    ManVec<int> colours;
+    ManVec<int64_t> colours;
+    ManVec<int64_t> coloursUniq;
 
     ManVec<int> bucketSizes;
     ManVec<int> bucketStarts;
     ManVec<pInd_t > iterationOrder;
+    OffloadHashMap<int64_t, pInd_t> colorOffset;
 
-    ManVec<size_t> bucketStartsColor; // sized num buckets
-    ManVec<size_t> bucketSizesColor; // sized num buckets
-    ManVec<pInd_t > iterationOrderPerColor;
-
-    ParallelReduce<size_t> reducer;
+    std::array<int64_t, 27> dirOffsets;
 
     int xGridSize;
     int yGridSize;
@@ -51,39 +44,23 @@ public:
     double yMax;
     double zMax;
 
-    #ifdef GPU
-    void     *devTempStorage = NULL;
-	size_t   allocatedDevTempBytes = 0;
-    #endif
-
-
     int totalCells = 0;
     double gridSpacing;
+
     NeighbourGrid() {
 
     };
 
-
-    void generate(ParticleData &pData, double searchDistance){
-        xvtxRangePush("grid rege");
-
-        gridSpacing = searchDistance;
-        generateNeighbourGrid(pData);
-        colourParticles(pData);
-        generateIterationList(pData);
-
-        xvtxRangePop();
-    }
+    void generate(ParticleData &pData, double searchDistance);
 
     DEVCALLABLE
-    int getGridColor(int x, int y, int z);
+    int64_t getGridColor(int x, int y, int z);
 
     DEVCALLABLE
     std::tuple<int, int, int> getCord(int color) {
         int x = color % xGridSize;
         int y = (color/xGridSize) % yGridSize;
         int z = (color/(xGridSize*yGridSize));
-        //     return ((x))+((y) * xGridSize) + ((z) * xGridSize * yGridSize);
         return std::tuple<int, int, int>(x,y,z);
     }
 
@@ -91,7 +68,7 @@ public:
     std::tuple<double, double, double> getGridId(double x, double y, double z);
 
     DEVCALLABLE
-    int getPraticleColor(pInd_t pInd);
+    int64_t getParticleColor(pInd_t pInd);
 
     std::tuple<double, double, double> getGridSize(double x, double y, double z);
 
@@ -101,21 +78,21 @@ public:
 
     void generateIterationList(ParticleData &data);
 
-    void reoder(ManVec<pInd_t> &order);
+    void reorder(ManVec<pInd_t> &order);
+
+    void toVTKHDF(std::string fileName);
 
     template<typename Fun, class... Args>
     DEVCALLABLE
     void iteratePossibleNeighbours(Fun fun, pInd_t pInd, int colour, bool indirect, Args &... args) {
-
         // if the particles are not reordered else assume they are ordered
-        if (indirect) {
-            for (int n = 0; n < 27; ++n) {
-                int targetBucket = targetBuckets[(colour) + (n * totalCells)];
-                // skip if the bucket does not exist, i.e. if the target bucket is -1
-                if (targetBucket == -1)
-                    continue;
 
-                for (size_t i = bucketStarts[targetBucket]; i < bucketStarts[targetBucket] + bucketSizes[targetBucket]; ++i) {
+        for (int n = 0; n < 27; ++n) {
+            int targetColour = colour + dirOffsets[n];
+            int targetBucket = colorOffset.getValue(targetColour);
+
+            if (targetBucket != colorOffset.notFound()) {
+                for (int i = bucketStarts[targetBucket]; i < bucketStarts[targetBucket] + bucketSizes[targetBucket]; ++i) {
                     pInd_t nInd = iterationOrder[i];
                     if (nInd == pInd) {
                         continue;
@@ -124,121 +101,9 @@ public:
                     fun(nInd, args...);
                 }
             }
-        } else {
-            for (int n = 0; n < 27; ++n) {
-                int targetBucket = targetBuckets[(colour) + (n * totalCells)];
-                // skip if the bucket does not exist
-                if (targetBucket == -1)
-                    continue;
-
-                for (size_t i = bucketStarts[targetBucket]; i < bucketStarts[targetBucket] + bucketSizes[targetBucket]; ++i) {
-                    pInd_t nInd = i;
-                    if (nInd == pInd) {
-                        continue;
-                    }
-
-                    fun(nInd, args...);
-                }
-            }
         }
     }
 
-    void toVTKHDF(std::string fileName) {
-        HDF5IO io;
-        io.createFile(fileName, MPI_COMM_WORLD);
-
-        io.openGroup("VTKHDF");
-        io.writeAttributeStr("Type", "UnstructuredGrid");
-        std::vector<long long int> version = {2, 2};
-        io.writeAttributeArr("Version", version);
-
-        ManVec<hpReal_t> points;
-        ManVec<int> connectivity;
-        ManVec<unsigned char> types;
-        ManVec<int> cellLoad;
-
-        int conn = 0;
-        int numCells = 0;
-        Iterator::iterate3D(SerialExec(), [&] (int x, int y, int z, NeighbourGrid &grid) {
-            int gridColor = grid.getGridColor(x, y, z);
-
-            cellLoad.push_back(grid.bucketSizes[gridColor]);
-
-            connectivity.push_back(conn++);
-            connectivity.push_back(conn++);
-            connectivity.push_back(conn++);
-            connectivity.push_back(conn++);
-            connectivity.push_back(conn++);
-            connectivity.push_back(conn++);
-            connectivity.push_back(conn++);
-            connectivity.push_back(conn++);
-            types.push_back(11);
-            numCells++;
-
-            points.push_back(grid.xMin + (x * grid.gridSpacing));
-            points.push_back(grid.yMin + (y * grid.gridSpacing));
-            points.push_back(grid.zMin + (z * grid.gridSpacing));
-
-            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
-            points.push_back(grid.yMin + (y * grid.gridSpacing));
-            points.push_back(grid.zMin + (z * grid.gridSpacing));
-
-            points.push_back(grid.xMin + (x * grid.gridSpacing));
-            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
-            points.push_back(grid.zMin + (z * grid.gridSpacing));
-
-            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
-            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
-            points.push_back(grid.zMin + (z * grid.gridSpacing));
-
-            points.push_back(grid.xMin + (x * grid.gridSpacing));
-            points.push_back(grid.yMin + (y * grid.gridSpacing));
-            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
-
-            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
-            points.push_back(grid.yMin + (y * grid.gridSpacing));
-            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
-
-            points.push_back(grid.xMin + (x * grid.gridSpacing));
-            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
-            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
-
-            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
-            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
-            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
-
-        }, xGridSize, yGridSize, zGridSize, *this);
-        Iterator::syncAll();
-
-        io.writeVectorAll2D(points, "Points", 3);
-        ManVec<long long int> NumberOfPoints;
-        NumberOfPoints.push_back(points.size()/3);
-        io.writeVectorFirst(NumberOfPoints, "NumberOfPoints");
-
-        ManVec<int> NumberOfConnectivityIds;
-        NumberOfConnectivityIds.push_back(numCells * 8);
-        io.writeVectorFirst(NumberOfConnectivityIds, "NumberOfConnectivityIds");
-
-        ManVec<int> NumberOfCells;
-        NumberOfCells.push_back(numCells);
-        io.writeVectorFirst(NumberOfCells, "NumberOfCells");
-
-        ManVec<int> Offsets;
-        for (int i = 0; i < numCells + 1; i++) {
-            Offsets.push_back((i) * 8);
-        }
-        io.writeVectorFirst(Offsets, "Offsets");
-
-        io.writeVectorFirst(connectivity, "Connectivity");
-        io.writeVectorFirst(types, "Types");
-
-        io.openGroup("CellData");
-        io.writeVectorFirst(cellLoad, "numParticles");
-        io.closeGroup();
-        io.closeGroup();
-
-        io.closeFile();
-    }
 };
 
 

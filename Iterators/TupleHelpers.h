@@ -19,7 +19,21 @@ T &getAtInd(int index, T *vec) {
 
 template<class T>
 DEVCALLABLE
-T &getAtIndVec(int index, ManVec<T> *vec) {
+T &getAtIndFlagged(int index, T *vec) {
+    return vec[index];
+}
+
+
+template<class T>
+DEVCALLABLE
+T getAtIndLdg(int index, T *vec) {
+    return __ldg(&vec[index]);
+}
+
+
+template<class T>
+DEVCALLABLE
+T &getAtIndVec(int index, const ManVec<T> *&vec) {
     return (*vec)[index];
 }
 
@@ -29,13 +43,50 @@ void setAtInd(int index, T *vec, T val) {
     vec[index] = val;
 }
 
-//implementation.
-template<class Fun, class ...Args, std::size_t... Is>
+// non temportal
+
+template<class T>
 DEVCALLABLE
-void callFunImpl(Fun fun, std::tuple<Args...> &tuple,
-              std::index_sequence<Is...>) {
-    fun(std::get<Is>(tuple)...);
+T getAtIndNT(int index, T *vec) {
+#if  ENABLE_HIP==1
+    return __builtin_nontemporal_load(&vec[index]);
+#else
+    return vec[index];
+#endif
 }
+
+template<class T>
+DEVCALLABLE
+void setAtIndNT(int index, T *vec, T val) {
+#if  ENABLE_HIP==1
+    __builtin_nontemporal_store(val, &vec[index]);
+#else
+    vec[index] = val;
+#endif
+}
+
+/*
+template<class Fun, class ArgsTuple>
+DEVCALLABLE
+void callFunImpl(Fun fun, ArgsTuple& argsTuple) {
+    std::apply(fun, argsTuple);
+}
+
+template<class Fun, class ArgsTuple, class FirstTuple, class... RestTuples>
+DEVCALLABLE
+void callFunImpl(Fun fun, ArgsTuple& accumulated, FirstTuple& first, RestTuples&... rest) {
+    auto combined = std::tuple_cat(accumulated, first);
+    callFunImpl(fun, combined, rest...);
+}
+
+template<class Fun, class... Tuples>
+DEVCALLABLE
+void callFun(Fun fun, Tuples&... tuples) {
+    auto empty = std::tuple<>();
+    callFunImpl(fun, empty, tuples...);
+}
+*/
+
 
 // the helper functions
 template<class Fun, class ...TupleArgs>
@@ -120,16 +171,41 @@ void callFun4(Fun fun,
 
 template<class ...Args>
 DEVCALLABLE
-std::tuple<Args...> getAtIndTuple(int ind, std::tuple<Args *...> ptrs) {
-    return std::apply([&](auto ...x) {
+std::tuple<Args...> getAtIndTuple(int ind, const std::tuple<Args *...> &ptrs) {
+    return std::apply([&](const auto & ...x) {
         return std::make_tuple(getAtInd(ind, x)...);
+    }, ptrs);
+}
+
+template<class ...Args>
+DEVCALLABLE
+std::tuple<Args...> getAtIndTupleNT(int ind, const std::tuple<Args *...> &ptrs) {
+    return std::apply([&](const auto & ...x) {
+        return std::make_tuple(getAtIndNT(ind, x)...);
+    }, ptrs);
+}
+
+template<class ...Args>
+DEVCALLABLE
+std::tuple<Args...> getAtIndTupleFlagged(int ind, const std::tuple<Args *...> &ptrs) {
+    return std::apply([&](const auto & ...x) {
+        return std::make_tuple(getAtIndFlagged(ind, x)...);
+    }, ptrs);
+}
+
+
+template<class ...Args>
+DEVCALLABLE
+std::tuple<Args...> getAtIndTupleLdg(int ind, const std::tuple<Args *...> &ptrs) {
+    return std::apply([&](const auto & ...x) {
+        return std::make_tuple(getAtIndLdg(ind, x)...);
     }, ptrs);
 }
 
 template<class ...Vecs>
 DEVCALLABLE
-auto getAtIndVecTuple(int ind, std::tuple<Vecs...> &ptrs) {
-    return std::apply([&](Vecs ...x) {
+auto getAtIndVecTuple(int ind, const std::tuple<Vecs...> &ptrs) {
+    return std::apply([&](const Vecs & ...x) {
         return std::make_tuple(getAtIndVec(ind, x)...);
     }, ptrs);
 }
@@ -164,7 +240,7 @@ makeSharedPtrs(uint8_t *base, int count, std::tuple<Args *...> ptrs) {
 
 template<std::size_t... ints, class ...Args>
 DEVCALLABLE
-void setAtIndTupleImpl(int ind, std::tuple<Args *...> ptrs, std::tuple<Args...> vals,
+void setAtIndTupleImpl(int ind, const std::tuple<Args *...> &ptrs, const std::tuple<Args...> &vals,
                    std::integer_sequence<std::size_t, ints...>) {
     ((std::get<ints>(ptrs)[ind] = std::get<ints>(vals)), ...);
 }
@@ -172,9 +248,39 @@ void setAtIndTupleImpl(int ind, std::tuple<Args *...> ptrs, std::tuple<Args...> 
 
 template<class ...Args>
 DEVCALLABLE
-void setAtIndTuple(int ind, std::tuple<Args *...> ptrs, std::tuple<Args...> vals) {
+void setAtIndTuple(int ind, const std::tuple<Args *...> &ptrs, const std::tuple<Args...> &vals) {
     setAtIndTupleImpl(ind, ptrs, vals, std::make_index_sequence<sizeof...(Args)>());
 }
+
+template<std::size_t... ints, class ...Args>
+DEVCALLABLE
+void setAtIndTupleImplFlagged(int ind, const std::tuple<Args *...> &ptrs, const std::tuple<Args...> &vals,
+                   std::integer_sequence<std::size_t, ints...>) {
+    ((std::get<ints>(ptrs)[ind] = std::get<ints>(vals)), ...);
+}
+
+
+template<class ...Args>
+DEVCALLABLE
+void setAtIndTupleFlagged(int ind, const std::tuple<Args *...> &ptrs, const std::tuple<Args...> &vals) {
+    setAtIndTupleImplFlagged(ind, ptrs, vals, std::make_index_sequence<sizeof...(Args)>());
+}
+
+template<std::size_t... ints, class ...Args>
+DEVCALLABLE
+void setAtIndTupleImplNT(int ind, const std::tuple<Args *...> &ptrs, const std::tuple<Args...> &vals,
+                   std::integer_sequence<std::size_t, ints...>) {
+    ((std::get<ints>(ptrs)[ind] = std::get<ints>(vals)), ...);
+}
+
+
+template<class ...Args>
+DEVCALLABLE
+void setAtIndTupleNT(int ind, const std::tuple<Args *...> &ptrs, const std::tuple<Args...> &vals) {
+    setAtIndTupleImplNT(ind, ptrs, vals, std::make_index_sequence<sizeof...(Args)>());
+}
+
+
 
 template<std::size_t... ints, class ... VecPtrs, class ...Args>
 DEVCALLABLE
@@ -203,6 +309,19 @@ template<class ...Args>
 DEVCALLABLE
 void addAtIndTuple(int ind, std::tuple<Args *...> ptrs, std::tuple<Args...> vals) {
     addAtIndTupleImpl(ind, ptrs, vals, std::make_index_sequence<sizeof...(Args)>());
+}
+
+template<std::size_t... ints, class ...Args>
+DEVCALLABLE
+void addTupleImpl(std::tuple<Args ...> &ptrs, std::tuple<Args...> vals, std::integer_sequence<std::size_t, ints...>) {
+    ((std::get<ints>(ptrs) += std::get<ints>(vals)), ...);
+}
+
+
+template<class ...Args>
+DEVCALLABLE
+void addTuple(std::tuple<Args ...> &ptrs, std::tuple<Args...> vals) {
+    addTupleImpl(ptrs, vals, std::make_index_sequence<sizeof...(Args)>());
 }
 
 template<std::size_t... ints, class ...ArgsA, class ...ArgsB>

@@ -54,7 +54,14 @@ public:
 
         // find the places that change
         int head_flags[indPerThread];
+
+#if (ENABLE_CUDA==1)
+        BlockDiscontinuity(storageDiscont).FlagHeads(head_flags, index, cuda::std::not_equal_to());
+#elif (ENABLE_HIP==1)
         BlockDiscontinuity(storageDiscont).FlagHeads(head_flags, index, cubX::Inequality());
+#endif
+
+
 
         int selectedIndex[indPerThread];
 

@@ -45,8 +45,6 @@ public:
 #endif
     }
 
-// iterateCombinedSimd<Vec16f, Vec16i, __mmask16, 16>(policy, indexes, pData, lData,  nFunc, lFunc);
-
     template< typename VecT, typename VecIT, typename MaskT, int width, class Policy, typename NFun, typename LFun, class FullArgs>
     void iterateCombinedSimd(Policy policy, ManVec<pInd_t> &indexes, HiDEMParticleData &pData, HiDEMLinkData &lData,
                          NFun nFunc, LFun lFunc, FullArgs args) {

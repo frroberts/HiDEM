@@ -11,6 +11,9 @@
 #include <LoggerV2/RangeCollection.h>
 
 #include "ParallelListGen.h"
+#include "H5IO/HDF5IO.h"
+#include "OutputWriters/CsvWriter.h"
+#include "OutputWriters/Hdf5Writer.h"
 
 template<class UserData>
 class LinkDataHandler : public UserData { 
@@ -48,13 +51,13 @@ public:
         //nvtxRangePop();
     }
 
-    void dropUnusedLinks(GlobalLocalMapper<gKey_t, pInd_t> &pMapper) {
+    void dropUnusedLinks(OffloadHashMap<gKey_t, pInd_t> &pMapper) {
         xvtxRangePush("dropUnusedLinks links");
         ManVec<lInd_t> toBeDropped;
         for (size_t i = 0; i < this->numLocal; ++i) {
-            ind_t pIndA = pMapper.getLocalInd(this->globalKeyEndA[i]);
-            ind_t pIndB = pMapper.getLocalInd(this->globalKeyEndB[i]);
-            if (pIndA == -1 || pIndB == -1)
+            ind_t pIndA = pMapper.getValue(this->globalKeyEndA[i]);
+            ind_t pIndB = pMapper.getValue(this->globalKeyEndB[i]);
+            if (pIndA == pMapper.notFound() || pIndB == pMapper.notFound())
                 toBeDropped.push_back(i);
         }
         dropLinks(toBeDropped);
@@ -63,21 +66,7 @@ public:
 
     void dropBrokenLinks() {
         xvtxRangePush("dropBrokenLinks links");
-        /*
-        ManVec<lInd_t> toBeDropped;
-        toBeDropped.resize(this->numLocal);
-        auto ptr = toBeDropped.data();
-        Iterator::iterate(OffloadExec(),[=]DEVCALLABLE(int ind) {
-            ptr[ind] = ind;
-        }, this->numLocal);
-        Iterator::syncAll();
 
-        auto statePtr = this->state.data();
-        auto point = thrust::stable_partition(toBeDropped.begin(), toBeDropped.end(), [=](int ind) {
-            return statePtr[ind] == 0;
-        });
-        toBeDropped.resize(std::distance(toBeDropped.begin(), point));
-*/
         auto statePtr = this->state.data();
         auto toBeDropped = listGenPredicate<lInd_t>(this->numLocal, [=] DEVCALLABLE (int ind) {
             return statePtr[ind] == 0;
@@ -102,7 +91,7 @@ public:
         int toKeep = std::distance(newLinkOrder.begin(), point);
 
         ManVec<lInd_t> newSideOrder;
-        newSideOrder.resize(this->numLocal * 2);
+        newSideOrder.resize(this->numSideData);
 
         auto newSideOrderPtr = newSideOrder.data();
         auto newLinkOrderPtr = newLinkOrder.data();
@@ -152,7 +141,6 @@ public:
         this->nonOwnedIndexes.clear();
     }
 
-
     void reorder(ManVec<lInd_t> &newOrder) {
         // odd types
         xvtxRangePush("reorder links");
@@ -169,11 +157,9 @@ public:
         xvtxRangePop();
     }
 
-
     void dropNonOwnedLinks() {
         dropLinks(this->nonOwnedIndexes);
     }
-
 
     void reorderSideData(ManVec<lInd_t> &newOrder) {
         //
@@ -187,7 +173,25 @@ public:
         xvtxRangePop();
     }
 
+    void reorderSideDataPadded(ManVec<lInd_t> &newOrder, size_t paddedSize) {
+        //
+        this->numSideData = paddedSize;
+        xvtxRangePush("reorderCT link");
+
+        callForTupleElem(this->getFieldTupleSideInput(), [&](auto vecPTr) {
+                    vecPTr->resize(paddedSize);
+                });
+
+        callForTupleElem(this->getFieldTupleSideInput(), [&](auto vecPtr) {
+            reorderDevVecScratch(*vecPtr, newOrder, scratchSpace);
+        });
+
+        this->reindexSideData(newOrder);
+        xvtxRangePop();
+    }
+
     void resizeSideData(size_t newSize) {
+        this->numSideData = newSize;
         callForTupleElem(this->getFieldTupleSideInput(), [&](auto vecPTr) {
             vecPTr->resize(newSize);
         });
@@ -198,18 +202,16 @@ public:
         // dropped reorder needs to replace elements in the back of it to work, not just leave to old ones there
         // the reversed lookup for the new order/indexing does not work if its not
         ManVec<lInd_t> newOrder;
-        getDropReorder(droppedSideInd, newOrder, (this->numLocal * 2));
-        size_t newSize = (this->numLocal * 2) - droppedSideInd.size();
+        getDropReorder(droppedSideInd, newOrder, (this->numSideData));
+        size_t newSize = (this->numSideData) - droppedSideInd.size();
         reorderSideData(newOrder);
         resizeSideData(newSize);
         xvtxRangePop();
     }
 
-
-
-
     void appendInitLinks(ManVec<ElementaryLink> &links) {
         size_t oldCount = this->numLocal;
+        size_t oldSideCount = this->numSideData;
         size_t newCount = this->numLocal + links.size();
         size_t numAdded = links.size();
 
@@ -221,15 +223,16 @@ public:
         this->numLocal = newCount;
 
         resize(newCount);
-        resizeSideData(newCount * 2);
+        resizeSideData(this->numSideData + (numAdded*2));
 
         auto linksPtr = links.data();
         Iterator::iterate(OffloadExec(), [=] DEVCALLABLE(ind_t i, UserData &lData) {
 
             lInd_t  outInd = i + oldCount;
+            lInd_t  outSideInd = i*2 + oldSideCount;
             auto &l = linksPtr[i];
 
-            lData.processInitLink(l, lData, outInd, outInd*2, outInd*2 + 1);
+            lData.processInitLink(l, lData, outInd, outSideInd, outSideInd + 1);
 
         }, numAdded, *this);
         Iterator::syncAll();
@@ -316,6 +319,135 @@ public:
             sum+= vecPTr->size();
         });
         return sum;
+    }
+
+
+    template<class... Names, class... Fields>
+    void snapshotLinksIndex(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields,
+                                ManVec<pInd_t> &indexes, std::optional<std::string> &outLinkType,
+                                std::optional<std::string> &outLinkFile, std::optional<std::string> &outWorkingPath,
+                                int currentTimestep,
+                                std::string prefix = "") {
+        RangeV2 r("write links", 2);
+        static_assert(sizeof...(Fields) == sizeof...(Names));
+        if (outLinkType && outLinkFile && !outLinkFile.value().empty()) {
+            // no these cant do inheritance they rely on templates
+            if (outLinkType.value() == "CSV") {
+                std::string outputStr = outWorkingPath.value_or(".") + "/" + std::to_string(getLocalRank()) + "_" +
+                                        prefix + outLinkFile.value() + std::to_string(currentTimestep);
+                CsvWriter linkIo;
+                linkIo.createFile(outputStr + ".csv");
+                linkIo.writeIndexed(indexes, fieldNames, vecPtrToDataPtr(outFields));
+                linkIo.closeFile();
+            } else if (outLinkType.value() == "HDF5") {
+                std::string outputStr =
+                        outWorkingPath.value_or(".") + "/" + prefix + outLinkFile.value() + std::to_string(currentTimestep);
+                Hdf5Writer linkIo;
+                linkIo.createFile(outputStr + ".h5");
+                linkIo.writeIndexed(indexes, this->numLocal, fieldNames, vecPtrToDataPtr(outFields));
+                linkIo.closeFile();
+            } else {
+                Logger::writeAtFirst("Unsupported link output type exiting ...");
+                exit(1);
+            }
+        }
+    }
+
+    void checkpointData(HDF5IO &h5) {
+        h5.openGroup("Links");
+        HDF5Span span = h5.generateSpan(this->ownedIndexes.size());
+
+        auto fields = this->getFieldTupleInput();
+
+        int fieldInd = 0;
+        callForTupleElem(fields, [&](auto vec) {
+            h5.writeDataIndexedSpan(vec->data(), this->numLocal, this->ownedIndexes.data(),
+                                    "field_" + std::to_string(fieldInd), span);
+            fieldInd++;
+        });
+        h5.writeSpan(span);
+        h5.closeGroup();
+
+        h5.openGroup("LinkSideData");
+
+        ManVec<lInd_t> sideIndexes;
+        for (size_t i = 0; i < this->ownedIndexes.size(); ++i) {
+            lInd_t lInd = this->ownedIndexes[i];
+            lInd_t sideIndA = this->sideIndEndA[lInd];
+            lInd_t sideIndB = this->sideIndEndB[lInd];
+            sideIndexes.push_back(sideIndA);
+            sideIndexes.push_back(sideIndB);
+        }
+        HDF5Span spanSide = h5.generateSpan(sideIndexes.size());
+
+        auto sideFields = this->getFieldTupleSideInput();
+        callForTupleElem(sideFields, [&]<class VecType>(VecType *vec) {
+            VecType temp;
+            temp.resize(sideIndexes.size());
+            for (size_t i = 0; i < sideIndexes.size(); ++i) {
+                temp[i] = (*vec)[sideIndexes[i]];
+            }
+            h5.writeDataSpan(temp.data(), "side_field_" + std::to_string(fieldInd), spanSide);
+            fieldInd++;
+        });
+        h5.writeSpan(spanSide);
+        h5.closeGroup();
+    }
+
+    void fromCheckpoint(HDF5IO &h5) {
+        //
+
+        h5.openGroup("Links");
+
+        std::vector<HDF5Span> spans = h5.readSpan();
+        int self = getLocalRank();
+
+        HDF5Span ownSpan;
+
+        int worldSize;
+        MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
+        if (spans.size() == worldSize) {
+            // normal read
+            ownSpan = spans[self];
+        } else {
+            std::cout << "restarting with different numer opf ranks is not supproted" << std::endl;
+            std::cout << "restart file has " << spans.size() << " ranks, current run uses " << worldSize << " ranks" <<
+                    std::endl;
+            exit(1);
+        }
+
+        int oldCount = this->numLocal;
+        int oldSideCount = this->numLocal*2;
+
+        this->resize(oldCount + ownSpan.localCount);
+
+        int fieldInd = 0;
+        callForTupleElem(this->getFieldTupleInput(), [&]<typename T>(ManVec<T> *vec) {
+            h5.readPtrSpann("field_" + std::to_string(fieldInd), &(vec->data()[oldCount]), ownSpan);
+
+            fieldInd++;
+        });
+        h5.closeGroup();
+
+        h5.openGroup("LinkSideData");
+        std::vector<HDF5Span> sideSpans = h5.readSpan();
+        auto ownSideSpan = sideSpans[self];
+
+        this->resizeSideData(oldSideCount + ownSideSpan.localCount);
+
+        callForTupleElem(this->getFieldTupleSideInput(), [&]<typename T>(ManVec<T> *vec) {
+            h5.readPtrSpann("side_field_" + std::to_string(fieldInd), &(vec->data()[oldSideCount]), ownSideSpan);
+            fieldInd++;
+        });
+
+        for (int i = oldSideCount; i < oldSideCount + (ownSideSpan.localCount/2); i++) {
+            this->sideIndEndA[i] = i * 2;
+            this->sideIndEndB[i] = (i * 2) + 1;
+        }
+
+        h5.closeGroup();
+
+        generateOwnedNonOwned(this->owners, this->ownedIndexes, this->nonOwnedIndexes, this->numLocal);
     }
 };
 

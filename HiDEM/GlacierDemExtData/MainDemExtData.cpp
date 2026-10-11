@@ -13,6 +13,7 @@
 
 #include <filesystem>
 
+#include "../Common/HiDEMDefaultFunctions.h"
 #include "Util/GPUSelect.h"
 
 class HiDEMLinkDataExt : public HiDEMLinkData {
@@ -131,6 +132,8 @@ int main(int argc, char *argv[]) {
     bool xBoundaryMax = arguments.getArg<bool>("general.xBoundaryMax").value_or(false);
     bool yBoundaryMin = arguments.getArg<bool>("general.yBoundaryMin").value_or(false);
     bool yBoundaryMax = arguments.getArg<bool>("general.yBoundaryMax").value_or(false);
+    bool zBoundaryMin = arguments.getArg<bool>("general.zBoundaryMin").value_or(false);
+    bool zBoundaryMax = arguments.getArg<bool>("general.zBoundaryMax").value_or(false);
 
     lpReal_t scale = arguments.getArg<lpReal_t>("general.scale").value_or(1.0);
     lpReal_t beamWidth = arguments.getArg<lpReal_t >("general.beamWidth").value_or(0.6);
@@ -500,101 +503,33 @@ int main(int argc, char *argv[]) {
         vForce += extForcePtr->vForce->interp(xCord, yCord);
         wForce += extForcePtr->wForce->interp(xCord, yCord);
 
-        lpReal_t dragInvDt2 = dragCoeff * invDt2;
+        auto [xVel,yVel,zVel,xThetaVel,yThetaVel,zThetaVel] =
+                HiDEMDefTimeIntegration(dragCoeff, invDt2, particleMass, invDtSqr,
+                                        dtSqr, particleMomentInertia, invDt,
+                                        xForce, xDiff, xCord, xCordPrev,
+                                        yForce, yDiff, yCord, yCordPrev,
+                                        zForce, zDiff, zCord, zCordPrev,
+                                        uForce, uDiff, xTheta, xThetaPrev,
+                                        vForce, vDiff, yTheta, yThetaPrev,
+                                        wForce, wDiff, zTheta, zThetaPrev);
 
-        lpReal_t massDtSqr = particleMass * invDtSqr;
+        // apply default velocity limits
+        HiDEMDefVelocityLimit(maxVel, maxRot, dt,
+                              xVel, xCord, xCordPrev,
+                              yVel, yCord, yCordPrev,
+                              zVel, zCord, zCordPrev,
+                              xThetaVel, xTheta, xThetaPrev,
+                              yThetaVel, yTheta, yThetaPrev,
+                              zThetaVel, zTheta, zThetaPrev);
 
-        lpReal_t pMassDtSqr = particleMass / dtSqr;
-        lpReal_t pMemDtSqr = (particleMomentInertia / dtSqr);
-
-        lpReal_t invC1 = lpReal_t(1.0) / (pMassDtSqr + dragCoeff * invDt2);
-        lpReal_t invC2 = lpReal_t(1.0) / (pMemDtSqr + dragCoeff * invDt2);
-
-        lpReal_t interDtSqr = particleMomentInertia * invDtSqr;
-
-        lpReal_t xDiffNext = (xForce + massDtSqr * xDiff + dragInvDt2 * -xDiff) * invC1;
-        lpReal_t yDiffNext = (yForce + massDtSqr * yDiff + dragInvDt2 * -yDiff) * invC1;
-        lpReal_t zDiffNext = (zForce + massDtSqr * zDiff + dragInvDt2 * -zDiff) * invC1;
-
-        lpReal_t uDiffNext = (uForce + interDtSqr * uDiff + dragInvDt2 * -uDiff) * invC2;
-        lpReal_t vDiffNext = (vForce + interDtSqr * vDiff + dragInvDt2 * -vDiff) * invC2;
-        lpReal_t wDiffNext = (wForce + interDtSqr * wDiff + dragInvDt2 * -wDiff) * invC2;
-
-        xCordPrev = xCord;
-        yCordPrev = yCord;
-        zCordPrev = zCord;
-        xThetaPrev = xTheta;
-        yThetaPrev = yTheta;
-        zThetaPrev = zTheta;
-
-        xCord = xCord + xDiffNext;
-        yCord = yCord + yDiffNext;
-        zCord = zCord + zDiffNext;
-        xTheta = xTheta + uDiffNext;
-        yTheta = yTheta + vDiffNext;
-        zTheta = zTheta + wDiffNext;
-
-        lpReal_t xVel = (xDiffNext) * invDt;
-        lpReal_t yVel = (yDiffNext) * invDt;
-        lpReal_t zVel = (zDiffNext) * invDt;
-        lpReal_t xThetaVel = (xTheta - xThetaPrev) * invDt;
-        lpReal_t yThetaVel = (yTheta - yThetaPrev) * invDt;
-        lpReal_t zThetaVel = (zTheta - zThetaPrev) * invDt;
-
-
-        // Restrict maximum particle velocity to below maxVel and maxRot
-        if (xVel > maxVel) {
-            xCord = dt * maxVel + xCordPrev;
-        }
-        if (yVel > maxVel) {
-            yCord = dt * maxVel + yCordPrev;
-        }
-        if (zVel > maxVel) {
-            zCord = dt * maxVel + zCordPrev;
-        }
-        if (xThetaVel > maxRot) {
-            xTheta = dt * maxRot + xThetaPrev;
-        }
-        if (yThetaVel > maxRot) {
-            yTheta = dt * maxRot + yThetaPrev;
-        }
-        if (zThetaVel > maxRot) {
-            zTheta = dt * maxRot + zThetaPrev;
-        }
-        // Restrict maximum particle velocity to above -maxVel and -maxRot
-        if (xVel < -maxVel) {
-            xCord = dt * -maxVel + xCordPrev;
-        }
-        if (yVel < -maxVel) {
-            yCord = dt * -maxVel + yCordPrev;
-        }
-        if (zVel < -maxVel) {
-            zCord = dt * -maxVel + zCordPrev;
-        }
-        if (xThetaVel < -maxRot) {
-            xTheta = dt * -maxRot + xThetaPrev;
-        }
-        if (yThetaVel < -maxRot) {
-            yTheta = dt * -maxRot + yThetaPrev;
-        }
-        if (zThetaVel < -maxRot) {
-            zTheta = dt * -maxRot + zThetaPrev;
-        }
-
-        // Boundary conditions
-        if (xCord + radius < lowerLimit.x && xBoundaryMin) {
-            xCord = xCordPrev;
-        }
-        if (xCord - radius > upperLimit.x && xBoundaryMax) {
-            xCord = xCordPrev;
-        }
-        if (yCord + radius < lowerLimit.y && yBoundaryMin) {
-            yCord = yCordPrev;
-        }
-        if (yCord - radius > upperLimit.y && yBoundaryMax) {
-            yCord = yCordPrev;
-        }
-
+        // apply default domain boundary limits
+        HiDEMDefBoundaryCondition(radius, lowerLimit, upperLimit,
+                                  xBoundaryMin, xBoundaryMax,
+                                  yBoundaryMin, yBoundaryMax,
+                                  zBoundaryMin, zBoundaryMax,
+                                  xCord, xCordPrev,
+                                  yCord, yCordPrev,
+                                  zCord, zCordPrev);
 
         pData.xCord[pInd] = xCord;
         pData.yCord[pInd] = yCord;

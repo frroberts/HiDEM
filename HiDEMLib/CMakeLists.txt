@@ -1,20 +1,7 @@
-function(setLayouts DEFAULT_LAYOUT)
-    if (CT_LAYOUT STREQUAL "")
-        target_compile_definitions(HiDEMLib PUBLIC ${DEFAULT_LAYOUT})
-        message("Setting layout to " ${DEFAULT_LAYOUT})
-    elseif (CT_LAYOUT STREQUAL "SOA")
-        target_compile_definitions(HiDEMLib PUBLIC SOA_CT)
-        message("Setting layout to SOA")
-    elseif (CT_LAYOUT STREQUAL "AOS")
-        target_compile_definitions(HiDEMLib PUBLIC AOS_CT)
-        message("Setting layout to AOS")
-    elseif (CT_LAYOUT STREQUAL "AOSOA")
-        target_compile_definitions(HiDEMLib PUBLIC AOSOA_CT)
-        message("Setting layout to AOSOA")
-    endif ()
+function(setLayouts TARGET_LAYOUT)
+    target_compile_definitions(HiDEMLib PUBLIC ${TARGET_LAYOUT})
+    message("Setting layout to " ${TARGET_LAYOUT})
 endfunction()
-
-
 
 
 add_library(HiDEMLib STATIC
@@ -31,7 +18,9 @@ add_library(HiDEMLib STATIC
         ../PLiB/Accel/CombinedAccelSmem.h
         HiDEMGeometry.cpp
         HiDEMGeometry.h
+        ../HiDEM/Common/HiDEMDefaultFunctions.h
 )
+# setLayouts("COMPRESSED_BLOCK_CT")
 
 if (ENABLE_CUDA)
     set_source_files_properties(
@@ -39,11 +28,18 @@ if (ENABLE_CUDA)
             HiDEMGeometry.cpp
 
             PROPERTIES LANGUAGE CUDA)
+    find_package(CUDAToolkit REQUIRED)
 
-    target_link_libraries(HiDEMLib PRIVATE ${CUDA_LIBRARIES})
+    target_link_libraries(HiDEMLib PRIVATE
+            CUDA::cudart
+            CUDA::curand
+    )
     target_include_directories(HiDEMLib PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 
-    setLayouts("AOSOA_CT")
+    target_compile_definitions(HiDEMLib PUBLIC NV${GPU_ARCH})
+
+
+    setLayouts("BLOCK_CT")
 
 elseif (ENABLE_HIP)
 
@@ -78,6 +74,12 @@ endif()
 if(ENABLE_OMP)
     target_link_libraries(HiDEMLib PUBLIC OpenMP::OpenMP_CXX)
 endif()
+
+if(ENABLE_UNWIND)
+    target_link_libraries(HiDEMLib PUBLIC unwind unwind-x86_64)
+endif()
+
+
 
 target_link_libraries(HiDEMLib PUBLIC Iterators)
 target_link_libraries(HiDEMLib PUBLIC PLiB)

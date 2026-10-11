@@ -101,12 +101,8 @@ public:
         std::cout << "Block size: {" << blockSize.x << "," << blockSize.y << "," << blockSize.z << "}" << std::endl;
         std::cout << "---------------------------------------" << "\n";
 
-        int unitCellCount = unitCell.size();
         int self = getLocalRank();
 
-//    std::random_device rd;
-//    std::mt19937 g(rd());
-//        std::shuffle(unitCell.begin(), unitCell.end(), g);
         for(auto &p: unitCell){
             p.radius *= scale;
             p.cord = p.cord * Real3{scale};
@@ -120,19 +116,6 @@ public:
         int upperXInt = ceil((gHigh.x - gLow.x) / blockSize.x) + 1;
         int upperYInt = ceil((gHigh.y - gLow.y) / blockSize.y) + 1;
         int upperZInt = ceil((gHigh.z - gLow.z) / blockSize.z) + 1;
-
-        // int nXBlocks = upperXInt - lowerXInt;
-        // int nYBlocks = upperYInt - lowerYInt;
-        // int nZBlocks = upperZInt - lowerZInt;
-
-        /*
-        std::cout << nXBlocks << " " << nYBlocks << " " << nZBlocks << std::endl;
-        std::cout << lowerXInt << " " << lowerYInt << " " << lowerZInt << std::endl;
-        std::cout << upperXInt << " " << upperYInt << " " << upperZInt << std::endl;
-        std::cout << gLow.x << " " << gLow.y << " " << gLow.z << std::endl;
-        std::cout << gHigh.x << " " << gHigh.y << " " << gHigh.z << std::endl;
-        std::cout << blockSize.x << " " << blockSize.y << " " << blockSize.z << std::endl;
-        */
 
         Domain global;
         global.lower = gLow;

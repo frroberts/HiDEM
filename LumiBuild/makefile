@@ -26,9 +26,9 @@ FLAGS = ${INCL_PATHS} ${MPI_INCL} ${HDF5_INCL} ${DEFS} --std=c++20 -O3 -g --offl
 LINK = hipcc
 
 LINKFLAGS = ${LINK} ${DEFS} -o HiDEM ${OBJECTS}  -lhiprand -L ${MPI_BASE_PATH}lib  -L ${HDF5_BASE_PATH}lib -lmpi -lhdf5 -lgomp \
--L${MPICH_DIR}/lib -lmpi ${CRAY_XPMEM_POST_LINK_OPTS} -lxpmem ${PE_MPICH_GTL_DIR_amd_gfx90a} ${PE_MPICH_GTL_LIBS_amd_gfx90a} -I${MPICH_DIR}/include -o HiDEM
+-L${MPICH_DIR}/lib -lmpi ${CRAY_XPMEM_POST_LINK_OPTS} -lxpmem ${PE_MPICH_GTL_DIR_amd_gfx90a} ${PE_MPICH_GTL_LIBS_amd_gfx90a} -I${MPICH_DIR}/include -o HiDEM  -lunwind -lunwind-x86_64
 
-OBJECTS = Util.o Balancer.o NeighbourGrid.o RangeCollection.o GeometryCollection.o Map2dLoader.o InputGeometry.o CompoundInput.o MapLoader.o HiDEMGeometry.o
+OBJECTS = Util.o Balancer.o NeighbourGrid.o RangeCollection.o GeometryCollection.o Map2dLoader.o InputGeometry.o CompoundInput.o MapLoader.o HiDEMGeometry.o HDF5IO.o
 
 
 MainCustom : MainCustom.o ${OBJECTS}
@@ -67,6 +67,9 @@ CompoundInput.o : ../PLiB/Geometry/CompoundInput.cpp Global.h
 	${COMP} ${FLAGS} -c $<
 MapLoader.o : ../PLiB/Geometry/MapLoader.cpp Global.h
 	${COMP} ${FLAGS} -c $<
+HDF5IO.o : ../PLiB/H5IO/HDF5IO.cpp Global.h
+	${COMP} ${FLAGS} -c $<
+
 
 HiDEMGeometry.o : ../HiDEMLib/HiDEMGeometry.cpp Global.h
 	${COMP} ${FLAGS} -c $<

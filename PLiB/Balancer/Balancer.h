@@ -58,18 +58,18 @@ public:
     int samplePoints = 10000000;
     bool sampled = true;
     bool verbose = false;
-    ManVec<double> *xCords;
-    ManVec<double> *yCords;
-    ManVec<double> *zCords;
+    ManVec<hpReal_t> *xCords;
+    ManVec<hpReal_t> *yCords;
+    ManVec<hpReal_t> *zCords;
     ManVec<double> *weights;
 
-    ManVec<double> xCordsSampled;
-    ManVec<double> yCordsSampled;
-    ManVec<double> zCordsSampled;
+    ManVec<hpReal_t> xCordsSampled;
+    ManVec<hpReal_t> yCordsSampled;
+    ManVec<hpReal_t> zCordsSampled;
     ManVec<double> weightsSampled;
 
     ManVec<double> sums;
-    ManVec<double, ScratchAllocator<double>> localLoads;
+    ManVec<double> localLoads;
     ManVec<double> globalLoads;
     ManVec<int> colors;
     ManVec<int> keys;
@@ -87,7 +87,7 @@ public:
     };
 
     void setComm(MPI_Comm newComm);
-    void setBuffers(ManVec<double> &xCords, ManVec<double> &yCords, ManVec<double> &zCords, ManVec<double> &weights);
+    void setBuffers(ManVec<hpReal_t> &xCords, ManVec<hpReal_t> &yCords, ManVec<hpReal_t> &zCords, ManVec<double> &weights);
 
     void getLocalLoadBulk(ManVec<BalancerDomain> &currentDomains);
 

@@ -9,6 +9,8 @@
 #include <ManVec.h>
 
 
+class MeshData;
+
 class VtkHdfWriter {
     HDF5IO io;
 
@@ -32,15 +34,12 @@ class VtkHdfWriter {
     template<std::size_t... ints, typename ...Names, typename ...Fields>
     void unpackValsImpl(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields, size_t fullSize,
                         std::integer_sequence<std::size_t, ints...>) {
-        (io.writeDataSpan(std::get<ints>(outFields), std::get<ints>(fieldNames), io.generateSpan(fullSize)), ...);
+        (io.writeDataLocalSize(std::get<ints>(outFields), std::get<ints>(fieldNames), fullSize), ...);
     }
 
 public:
     VtkHdfWriter() = default;
-    VtkHdfWriter(bool compression, int compressionLevel) : io(compression, compressionLevel) {
-        //
 
-    }
     // todo change write to stage
     // add write call
     // the idea being you can call stage and then the io function will make local copies to write out later
@@ -62,6 +61,14 @@ public:
         MPI_Allreduce(&numParticlesLocal, &numParticlesGlobal, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
         io.openGroup("VTKHDF");
+        ManVec<int> numberOfConnectivityIds;
+        numberOfConnectivityIds.push_back(0);
+        ManVec<int> numberOfCells;
+        numberOfCells.push_back(0);
+        ManVec<int> offsets;
+        offsets.push_back(0);
+        ManVec<int> connectivity;
+
         io.writeAttributeStr("Type", "PolyData");
         std::vector<long long int> version = {2, 2};
         io.writeAttributeArr("Version", version);
@@ -78,36 +85,36 @@ public:
         unpackValsIndexed(fieldNames, outFields, indexes, xCords.size());
         io.closeGroup();
 
-        ManVec<int> numberOfConnectivityIds;
-        numberOfConnectivityIds.push_back(0);
-        ManVec<int> numberOfCells;
-        numberOfCells.push_back(0);
-        ManVec<int> offsets;
-        offsets.push_back(0);
-        ManVec<int> connectivity;
+
         // this is a bit of a hack, it should be empty
         connectivity.push_back(0);
 
         io.openGroup("Lines");
-        io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
-        io.writeVectorFirst(numberOfCells, "NumberOfCells");
-        io.writeVectorFirst(offsets, "Offsets");
-        io.writeVectorFirst(connectivity, "Connectivity");
-        io.closeGroup();
+        {
+            io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
+            io.writeVectorFirst(numberOfCells, "NumberOfCells");
+            io.writeVectorFirst(offsets, "Offsets");
+            io.writeVectorFirst(connectivity, "Connectivity");
+            io.closeGroup();
+        }
 
         io.openGroup("Polygons");
-        io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
-        io.writeVectorFirst(numberOfCells, "NumberOfCells");
-        io.writeVectorFirst(offsets, "Offsets");
-        io.writeVectorFirst(connectivity, "Connectivity");
-        io.closeGroup();
+        {
+            io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
+            io.writeVectorFirst(numberOfCells, "NumberOfCells");
+            io.writeVectorFirst(offsets, "Offsets");
+            io.writeVectorFirst(connectivity, "Connectivity");
+            io.closeGroup();
+        }
 
         io.openGroup("Strips");
-        io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
-        io.writeVectorFirst(numberOfCells, "NumberOfCells");
-        io.writeVectorFirst(offsets, "Offsets");
-        io.writeVectorFirst(connectivity, "Connectivity");
-        io.closeGroup();
+        {
+            io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
+            io.writeVectorFirst(numberOfCells, "NumberOfCells");
+            io.writeVectorFirst(offsets, "Offsets");
+            io.writeVectorFirst(connectivity, "Connectivity");
+            io.closeGroup();
+        }
 
         offsets.resize(numParticlesGlobal+1);
         connectivity.resize(numParticlesGlobal);
@@ -122,15 +129,17 @@ public:
         Iterator::syncAll();
 
         io.openGroup("Vertices");
-        numberOfCells[0] = numParticlesGlobal;
-        numberOfConnectivityIds[0] = numParticlesGlobal;
-        io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
-        io.writeVectorFirst(numberOfCells, "NumberOfCells");
-        // possibly create serial offset vector here
+        {
+            numberOfCells[0] = numParticlesGlobal;
+            numberOfConnectivityIds[0] = numParticlesGlobal;
+            io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
+            io.writeVectorFirst(numberOfCells, "NumberOfCells");
+            // possibly create serial offset vector here
 
-        io.writeVectorFirst(offsets, "Offsets");
-        io.writeVectorFirst(connectivity, "Connectivity");
-        io.closeGroup();
+            io.writeVectorFirst(offsets, "Offsets");
+            io.writeVectorFirst(connectivity, "Connectivity");
+            io.closeGroup();
+        }
 
         io.closeGroup();
     }

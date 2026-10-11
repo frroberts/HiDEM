@@ -192,49 +192,45 @@ public:
 
         addedLinks = 0;
 
-        {
-            auto checkFun = [=] DEVCALLABLE (pInd_t pInd, pInd_t nInd, int i) {
-                // check direction here
-                int particleLinkCount = accel->lAccel.linksPerParticle[pInd];
+        auto checkFun = [=] DEVCALLABLE (pInd_t pInd, pInd_t nInd, int i) {
+            // check direction here
+            int particleLinkCount = accel->lAccel.linksPerParticle[pInd];
 
-                for (size_t j = 0; j < particleLinkCount; ++j) {
-                    lInd_t lInd = accel->lAccel.getPartLinkId(j, pInd);
-                    pInd_t pIndOther = accel->lAccel.otherPartLink[
-                        (accel->lAccel.numPraticlesAllocated * j) + pInd];
+            for (size_t j = 0; j < particleLinkCount; ++j) {
+                lInd_t lInd = accel->lAccel.getPartLinkId(j, pInd);
+                pInd_t pIndOther = accel->lAccel.otherPartLink[
+                    (accel->lAccel.numPraticlesAllocated * j) + pInd];
 
-                    if (pIndOther == nInd && lDataPtr->state[lInd] == 1) {
-                        return false;
-                        // break;
-                    }
+                if (pIndOther == nInd && lDataPtr->state[lInd] == 1) {
+                    return false;
+                    // break;
                 }
-                return true;
-            };
+            }
+            return true;
+        };
 
+        genNewLinks(OffloadExec(), pDataPtr, &accel->nList, newLinks, numNeighs, 0, checkFun);
+        auto newLinksPtr = newLinks.data();
+        RangeV2 r("sync new links", 3);
 
-            genNewLinks(OffloadExec(), pDataPtr, &accel->nList, newLinks, numNeighs, 0, checkFun);
-        } {
-            auto newLinksPtr = newLinks.data();
-            RangeV2 r("sync new links", 3);
+        MPI_Barrier(MPI_COMM_WORLD);
 
-            MPI_Barrier(MPI_COMM_WORLD);
+        gKey_t gKeyLocalOffset = 0;
+        gKey_t gKeyGlobalMax;
 
-            gKey_t gKeyLocalOffset = 0;
-            gKey_t gKeyGlobalMax;
+        // track this better
+        gKey_t gKeyLocalMax = *stx::max_element(EXECPOLICY lDataPtr->globalKeys.begin(), lDataPtr->globalKeys.end()); //gKeyReducer.max(lDataPtr->globalKeys);
 
-            // track this better
-            gKey_t gKeyLocalMax = *stx::max_element(EXECPOLICY lDataPtr->globalKeys.begin(), lDataPtr->globalKeys.end());//gKeyReducer.max(lDataPtr->globalKeys);
+        gKey_t newKeyCount = newLinks.size();
 
-            gKey_t newKeyCount = newLinks.size();
+        MPI_Allreduce(&gKeyLocalMax, &gKeyGlobalMax, 1, MPI_LONG_LONG_INT, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Exscan(&newKeyCount, &gKeyLocalOffset, 1, MPI_LONG_LONG_INT, MPI_SUM, MPI_COMM_WORLD);
 
-            MPI_Allreduce(&gKeyLocalMax, &gKeyGlobalMax, 1, MPI_LONG_LONG_INT, MPI_MAX, MPI_COMM_WORLD);
-            MPI_Exscan(&newKeyCount, &gKeyLocalOffset, 1, MPI_LONG_LONG_INT, MPI_SUM, MPI_COMM_WORLD);
-
-            Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i) {
-                newLinksPtr[i].globalKey = 1 + (gKeyGlobalMax + gKeyLocalOffset + i);
-            }, newKeyCount);
-
-            MPI_Barrier(MPI_COMM_WORLD);
-        }
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i) {
+            newLinksPtr[i].globalKey = 1 + (gKeyGlobalMax + gKeyLocalOffset + i);
+        }, newKeyCount);
+        Iterator::syncAll();
+        MPI_Barrier(MPI_COMM_WORLD);
         return newLinks;
     }
 };

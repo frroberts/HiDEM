@@ -34,9 +34,9 @@ public:
 
         if (world.self == 0) {
 
-            ManVec<double> xCord;
-            ManVec<double> yCord;
-            ManVec<double> zCord;
+            ManVec<hpReal_t> xCord;
+            ManVec<hpReal_t> yCord;
+            ManVec<hpReal_t> zCord;
             ManVec<double> weights;
 
             while(weights.size() < numSamples){
@@ -72,30 +72,15 @@ public:
         }
 
         MPI_Bcast(world.domains.data(), sizeof(Domain) * world.size, MPI_BYTE, 0, MPI_COMM_WORLD);
-        // world.domiansToVTKHDF("initial.vtkhdf");
     }
 
 
-    static void generateBalancedDomains(ManVec<double> &xCord, ManVec<double> &yCord, ManVec<double> &zCord, ManVec<double> &weights,
+    static void generateBalancedDomains(ManVec<hpReal_t> &xCord, ManVec<hpReal_t> &yCord, ManVec<hpReal_t> &zCord, ManVec<double> &weights,
         double haloSize, double tolerance, Domain bounding, World &world) {
         //
         RangeV2 r("domain generate", 3);
 
         Logger::writeAtFirst("re-balancing \n");
-
-        /*
-        double xMax = std::numeric_limits<double>::min();
-        double yMax = std::numeric_limits<double>::min();
-        double zMax = std::numeric_limits<double>::min();
-        double xMin = std::numeric_limits<double>::max();
-        double yMin = std::numeric_limits<double>::max();
-        double zMin = std::numeric_limits<double>::max();
-
-        ParallelReduce<double> reducer;
-        reducer.minMax(xMin, xMax, xCord);
-        reducer.minMax(yMin, yMax, yCord);
-        reducer.minMax(zMin, zMax, zCord);
-        */
 
         auto [xMin, xMax] = stx::minmax_element(EXECPOLICY xCord.begin(), xCord.end());
         auto [yMin, yMax] = stx::minmax_element(EXECPOLICY yCord.begin(), yCord.end());

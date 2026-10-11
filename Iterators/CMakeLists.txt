@@ -1,7 +1,8 @@
 
 add_library(Iterators INTERFACE
         ParallelListGen.h
-        ThrustHelper.h)
+        ThrustHelper.h
+        SmemEnumerator.h)
 target_sources(Iterators INTERFACE
         DevCall.h
         ManVec.h

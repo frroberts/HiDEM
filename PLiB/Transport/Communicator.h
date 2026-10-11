@@ -46,7 +46,7 @@ public:
     int tagStart = 0;
 
     template <class gType, class lType>
-    void makeLocalIndexes(GlobalLocalMapper<gType, lType> &mapper)
+    void makeLocalIndexes(OffloadHashMap<gType, lType> &mapper)
     {
             xvtxRangePush("makeLocalIndexes");
 
@@ -84,11 +84,11 @@ public:
         }
 
         for (const auto &target: outgoingTargets) {
-            mapper.bulkGetLocal(outgoingGlobalKeys[target.second], outgoingIndexes, outgoingStarts[target.second]);
+            mapper.bulkGetValue(outgoingGlobalKeys[target.second], outgoingIndexes, outgoingStarts[target.second]);
         }
 
         for (const auto &target: incommingTargets) {
-            mapper.bulkGetLocal(incommingGlobalKeys[target.second], incommingIndexes, incommingStarts[target.second]);
+            mapper.bulkGetValue(incommingGlobalKeys[target.second], incommingIndexes, incommingStarts[target.second]);
         }
 
         Iterator::syncAll();
@@ -111,16 +111,6 @@ public:
         Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i) {
             incommingIndexesPtr[i] = indirectIncommingAddressesPtr[incommingIndexesPtr[i]];
         }, incommingIndexes.size());
-        /*
-        for (int i = 0; i < outgoingIndexes.size(); ++i) {
-            //
-            outgoingIndexes[i] = indirectOutgoingAddresses[outgoingIndexes[i]];
-        }
-        for (int i = 0; i < incommingIndexes.size(); ++i) {
-            //
-            incommingIndexes[i] = indirectIncommingAddresses[incommingIndexes[i]];
-        }
-        */
 
         Iterator::syncAll();
 

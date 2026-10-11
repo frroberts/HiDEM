@@ -82,10 +82,6 @@ public:
             outTargets[i].globalKeysPtr = globalKeysOut.data() + offset;
             offset += outTargets[i].count;
 
-            /*
-            outTargets[i].indexes.resize(outTargets[i].count);
-            outTargets[i].globalKeys.resize(outTargets[i].count);
-            */
             outTargets[i].count = 0;
         }
         Iterator::syncAll();
@@ -103,7 +99,6 @@ public:
                     transporter.outTargets[d.owner].globalKeysPtr[place] = pData.globalKeys[pInd];
                 }
             }
-
 
         }, pData, *this);
 

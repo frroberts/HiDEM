@@ -16,26 +16,32 @@
 
 #include "../PLiB/Global.h"
 
-#ifdef GPU
+#include "AtomicOps.h"
 
+
+#ifdef GPU
 #include <thrust/gather.h>
 #include <thrust/execution_policy.h>
 #include <thrust/shuffle.h>
 #include <thrust/random.h>
 #include <thrust/sequence.h>
 
-#include "AtomicOps.h"
 
 
-__global__ void domainReduceLocal(hpReal_t *xCords,hpReal_t *yCords,hpReal_t *zCords,hpReal_t *weights, double *loads, BalancerDomain *domains, int numDomains) {
+
+__global__ void domainReduceLocal(hpReal_t *xCords,hpReal_t *yCords,hpReal_t *zCords, double *weights, size_t maxElem, double *loads, BalancerDomain *domains, int numDomains) {
     //
     __shared__ double domainLoads[128];
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int tid = threadIdx.x;
-    if (tid < 128) {
-        domainLoads[tid] = 0;
+    size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (threadIdx.x < 128) {
+        domainLoads[threadIdx.x] = 0.0;
     }
     __syncthreads();
+
+    if (i >= maxElem) {
+        return;
+    }
 
     Real3 cord = {xCords[i], yCords[i], zCords[i]};
     for (int j = 0; j < numDomains; j++) {
@@ -57,14 +63,16 @@ __global__ void domainReduceLocal(hpReal_t *xCords,hpReal_t *yCords,hpReal_t *zC
 void Balancer::getLocalLoadBulk(ManVec<BalancerDomain> &currentDomains) {
     dim3 block = {1024};
     dim3 grid = {1 + (numParticles / block.x)};
-    for (auto i = 0; i < currentDomains.size(); i+= 128) {
+    for (size_t i = 0; i < currentDomains.size(); i+= 128) {
         int domainsInIter = currentDomains.size()-i;
         if (domainsInIter > 128) {
             domainsInIter = 128;
         }
 
-        domainReduceLocal<<<grid, block>>>(xCords->data(), yCords->data(), zCords->data(),weights->data(),
-                                           localLoads.data()+i, currentDomains.data()+i, domainsInIter);
+        getErrorDev((domainReduceLocal<<<grid, block>>>(xCords->data(), yCords->data(), zCords->data(),weights->data(), xCords->size(),
+                                           localLoads.data()+i, currentDomains.data()+i, domainsInIter)));
+        Iterator::syncAll();
+
     }
 }
 #else
@@ -100,9 +108,9 @@ void Balancer::setComm(MPI_Comm newComm) {
     comm = newComm;
 }
 
-void Balancer::setBuffers(ManVec<double> &xCords, ManVec<double> &yCords, ManVec<double> &zCords, ManVec<double> &weights)
+void Balancer::setBuffers(ManVec<hpReal_t> &xCords, ManVec<hpReal_t> &yCords, ManVec<hpReal_t> &zCords, ManVec<double> &weights)
 {
-    if (xCords.size() > samplePoints && sampled)
+    if (xCords.size() > static_cast<size_t>(samplePoints) && sampled)
     {
         numParticles = samplePoints;
 
@@ -239,6 +247,7 @@ void Balancer::split(ManVec<BalancerDomain> &currentDomains, ManVec<BalancerDoma
             current.currentDomain.upper = current.currentDomain.upper + (cnst * current.domainSize);
 
         }, currentDomains.size());
+        Iterator::syncAll();
 
         getLocalLoadBulk(currentDomains);
 
@@ -246,11 +255,12 @@ void Balancer::split(ManVec<BalancerDomain> &currentDomains, ManVec<BalancerDoma
 
         MPI_Allreduce(localLoads.data(), globalLoads.data(), currentDomains.size(), MPI_DOUBLE, MPI_SUM, comm);
 
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i) {
+        auto globalLoadsPtr = globalLoads.data();
+        Iterator::iterate(OffloadExec(), [=, this] DEVCALLABLE (int i) {
             auto &current = domainPtr[i];
 
             if (!current.done)
-                current.currentDomain.load = globalLoads[i];
+                current.currentDomain.load = globalLoadsPtr[i];
 
             if ((current.currentDomain.load <= current.targetLoad + current.targetLoad * tolerance) &&
                 (current.currentDomain.load >= current.targetLoad - current.targetLoad * tolerance)) {
@@ -258,12 +268,15 @@ void Balancer::split(ManVec<BalancerDomain> &currentDomains, ManVec<BalancerDoma
             }
         }, currentDomains.size());
 
+        Iterator::syncAll();
+
         bool allDone = ParStd::transform_reduce(EXECPOLICY currentDomains.begin(), currentDomains.end(), true,
                                              []DEVCALLABLE (bool a, bool b) {
                                                  return a && b;
                                              }, [=] DEVCALLABLE (BalancerDomain b) {
                                                  return b.done;
                                              });
+        Iterator::syncAll();
 
         if (allDone)
             break;

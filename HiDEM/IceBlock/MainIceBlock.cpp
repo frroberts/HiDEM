@@ -187,8 +187,8 @@ int main(int argc, char *argv[]) {
                     const lpReal_t &uDiffOther, const lpReal_t &vDiffOther, const lpReal_t &wDiffOther,
                     const lpReal_t &radiusOther,
 
-                    lpReal_t &CT0, lpReal_t &CT1, lpReal_t &CT2,
-                    lpReal_t &CT3, lpReal_t &CT4, lpReal_t &CT5,
+                    ctReal_t &CT0, ctReal_t &CT1, ctReal_t &CT2,
+                    ctReal_t &CT3, ctReal_t &CT4, ctReal_t &CT5,
 
                     lpReal_t &xForce, lpReal_t &yForce, lpReal_t &zForce,
                     lpReal_t &uForce, lpReal_t &vForce, lpReal_t &wForce

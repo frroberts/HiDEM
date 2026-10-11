@@ -69,7 +69,7 @@ size_t Map2dLoader::readInput(std::string path) {
         }
     } else {
         std::cout << "input file open failed" << std::endl;
-        return -1;
+        return std::numeric_limits<size_t>::max();
     }
     auto end = std::chrono::steady_clock::now();
     std::chrono::duration<double> elapsed_seconds = end-start;

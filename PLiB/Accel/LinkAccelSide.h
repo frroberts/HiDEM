@@ -23,6 +23,8 @@ public:
     // list of what side index is associated with the current link end
     ManVec<pInd_t> linkSideLind;
 
+    ManVec<lInd_t> newSideOrder;
+
     bool keepInactive = false;
 
     int numPraticlesAllocated;
@@ -44,10 +46,9 @@ public:
 
         pData.iterateAllParticles(OffloadExec(), [=] DEVCALLABLE (pInd_t pInd, LinkData &lData, LinkAccelSide &lAccel) {
             int particleLinkCount = lAccel.linksPerParticle[pInd];
-            for (size_t i = 0; i < particleLinkCount; ++i) {
+            for (int i = 0; i < particleLinkCount; ++i) {
                 lInd_t lInd = lAccel.getPartLinkId(i, pInd);
-                //if (!lAccel.keepInactive && lData.state[lInd] == 0)
-                //    continue;
+
                 pInd_t pIndOther = lData.localPartIndB[lInd];
                 lInd_t sideInd;
                 if (pIndOther == pInd) {
@@ -66,6 +67,8 @@ public:
     }
 
     int getMaxLinksPerParticle( LinkData &lData, pInd_t numParticles) {
+            auto range = xvtxRangeStart("getMaxLinksPerParticle");
+
         linksPerParticle.resize(numParticles);
         auto linksPerParticlePtr = linksPerParticle.data();
         Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (pInd_t i) {
@@ -81,11 +84,14 @@ public:
         },lData.numLocal);
         Iterator::syncAll();
         auto elem = stx::max_element(EXECPOLICY linksPerParticle.begin(), linksPerParticle.end() );
+            xvtxRangeEnd(range);
+
         return *elem;
     }
 
-
     void generateLinks(ParticleData &pData, LinkData &lData) {
+            auto range = xvtxRangeStart("getMaxLinksPerParticle");
+
         allocatedMaxLinks = getMaxLinksPerParticle(lData, pData.numLocal);
         linksPerParticle.resize(pData.numLocal);
         numPraticlesAllocated = pData.numLocal;
@@ -98,9 +104,6 @@ public:
         Iterator::syncAll();
 
         Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (lInd_t i, LinkData &lData, LinkAccelSide &lAccel) {
-            // causes issues on LUMI, not quite sure why ?
-            // if (!lAccel.keepInactive && lData.state[i] == 0)
-            //     return;
 
             pInd_t pIndA = lData.localPartIndA[i];
             pInd_t pIndB = lData.localPartIndB[i];
@@ -136,6 +139,7 @@ public:
         Iterator::syncAll();
 
         generatePerParticleIndexes(pData, lData);
+            xvtxRangeEnd(range);
     }
 
     template<typename Fun, class... Args>
@@ -143,7 +147,7 @@ public:
     void iterateParticleLinksCT(Fun fun, pInd_t pInd, Args &... args) {
         //
         int particleLinkCount = linksPerParticle[pInd];
-        for (size_t i = 0; i < particleLinkCount; ++i) {
+        for (int i = 0; i < particleLinkCount; ++i) {
             lInd_t lInd = getPartLinkId(i, pInd);
             // should this not be localPartIndB, i.e the other particle?
             pInd_t pIndOther = otherPartLink[(numPraticlesAllocated* i) + pInd];
@@ -158,13 +162,13 @@ public:
         RangeV2 r5("sort link side data", 3);
         ind_t numParticles = pData.numLocal;
 
-        ManVec<lInd_t> newOrder;
-        newOrder.resize(lData.numLocal * 2);
+
+
 #if defined(SOA_CT)
 
     #warning "compiling SOA_CT"
         ind_t orderInd = 0;
-
+            newSideOrder.resize(lData.numSideData);
         for (int i = 0; i < allocatedMaxLinks; ++i) {
             for (int pInd = 0; pInd < numParticles; ++pInd) {
                 int numLinks = linksPerParticle[pInd];
@@ -178,7 +182,7 @@ public:
                 else {
                     ctInd = lData.sideIndEndB[lInd];
                 }
-                newOrder[orderInd] = ctInd;
+                newSideOrder[orderInd] = ctInd;
                 orderInd++;
             }
         }
@@ -188,7 +192,7 @@ public:
 
         int numInBlock = 64;
         int numBlocks = 1 + (numParticles / numInBlock);
-
+            newSideOrder.resize(lData.numSideData);
 
         ManVec<lInd_t> blockSizes;
         ManVec<lInd_t> blockStarts;
@@ -215,13 +219,13 @@ public:
             }
             ptr[b] = c;
         }, numBlocks, *this);
-
+            Iterator::syncAll();
         // running sum of sizes to get block starts
 
         ParallelScan::exclusive(blockSizes, blockStarts);
 
         // for each block run all the links, one thread per block, its not the best but better than serial?
-        auto newOrderPtr = newOrder.data();
+        auto newSideOrderPtr = newSideOrder.data();
         auto blockStartPtr = blockStarts.data();
         Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int b, LData &lData, LinkAccelSide &lAccel) {
             int c = blockStartPtr[b]; // get block start
@@ -242,9 +246,126 @@ public:
                     else {
                         sideInd = lData.sideIndEndB[lInd];
                     }
-                    newOrderPtr[c] = sideInd;
+                    newSideOrderPtr[c] = sideInd;
                     c++;
                 }
+            }
+        }, numBlocks, lData, *this);
+        Iterator::syncAll();
+
+#elif defined(BLOCK_CT)
+#warning "compiling BLOCK_CT"
+            int numInBlock = 128;
+            int numBlocks = 1 + (numParticles / numInBlock);
+
+            newSideOrder.resize((numBlocks * numInBlock) * allocatedMaxLinks * 2);
+
+            auto newSideOrderPtr = newSideOrder.data();
+            Iterator::iterate(OffloadExec(), [=]DEVCALLABLE (int i)
+            {
+                newSideOrderPtr[i] = -1;
+            }, newSideOrder.size());
+            Iterator::syncAll();
+            auto range = xvtxRangeStart("blockCT");
+
+        Iterator::iterateBlocked(OffloadExec(), [=, this] DEVCALLABLE (int blockId, int i, LData & lData) {
+            int blockStart = (blockId * numInBlock);
+            for (int li = 0; li < allocatedMaxLinks; ++li) {
+                //
+
+                if (blockStart + i >= numParticles)
+                    continue;
+
+                pInd_t pInd = blockStart + i;
+                if (li >= linksPerParticle[pInd])
+                    continue;
+
+                lInd_t lInd = getPartLinkId(li, pInd);
+                lInd_t sideInd;
+                if (lData.localPartIndA[lInd] == pInd)
+                    sideInd = lData.sideIndEndA[lInd];
+                else {
+                    sideInd = lData.sideIndEndB[lInd];
+                }
+                int outInd = (blockStart * allocatedMaxLinks) + (li * numInBlock) + i;
+                newSideOrderPtr[outInd] = sideInd;
+            }
+        }, numInBlock, numBlocks * numInBlock, lData);
+        Iterator::syncAll();
+        xvtxRangeEnd(range);
+
+#elif defined(COMPRESSED_BLOCK_CT)
+#warning "compiling COMPRESSED_BLOCK_CT"
+
+        int numInBlock = 128;
+        int numBlocks = 1 + (numParticles / numInBlock);
+            newSideOrder.resize(lData.numSideData);
+
+        ManVec<lInd_t> blockSizes;
+        ManVec<lInd_t> blockStarts;
+        blockSizes.resize(numBlocks, false);
+        blockStarts.resize(numBlocks, false);
+        auto ptr = blockSizes.data();
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i) {
+            ptr[i] = 0;
+        }, numBlocks);
+
+        // get active in block
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int b, LinkAccelSide &lAccel) {
+            int c = 0;// 128 * lAccel.allocatedMaxLinks;
+
+            for (int l = 0; l < lAccel.allocatedMaxLinks; l++) {
+                for (size_t i = 0; i < numInBlock; i++) {
+                    int blockStart = (b * numInBlock);
+                    if (blockStart + i >= numParticles)
+                        continue;
+                    pInd_t pInd = blockStart + i;
+                    if (l >= lAccel.linksPerParticle[pInd])
+                        continue;
+                    c++;
+                }
+            }
+            c = (1+(c/32))*32;
+            ptr[b] = c;
+        }, numBlocks, *this);
+
+
+        // running sum of sizes to get block starts
+
+        ParallelScan::exclusive(blockSizes, blockStarts);
+            size_t numIndexes = blockStarts[blockStarts.size() - 1] + blockSizes[blockSizes.size() - 1];
+
+            newSideOrder.resize(numIndexes);
+
+        // for each block run all the links, one thread per block, its not the best but better than serial?
+        auto newSideOrderPtr = newSideOrder.data();
+        auto blockStartPtr = blockStarts.data();
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int b, LData &lData, LinkAccelSide &lAccel) {
+            int c = blockStartPtr[b]; // get block start
+            for (int l = 0; l < lAccel.allocatedMaxLinks; l++) {
+                for (size_t i = 0; i < numInBlock; i++) {
+                    int blockStart = (b * numInBlock);
+                    if (blockStart + i >= numParticles)
+                        continue;
+
+                    pInd_t pInd = blockStart + i;
+                    if (l >= lAccel.linksPerParticle[pInd])
+                        continue;
+
+                    lInd_t lInd = lAccel.getPartLinkId(l, pInd);
+                    lInd_t sideInd;
+                    if (lData.localPartIndA[lInd] == pInd)
+                        sideInd = lData.sideIndEndA[lInd];
+                    else {
+                        sideInd = lData.sideIndEndB[lInd];
+                    }
+                    newSideOrderPtr[c] = sideInd;
+                    c++;
+                }
+            }
+            // pad new order with -1
+            for (;c < ((1+(c/32))*32)-1; c++) {
+                newSideOrderPtr[c] = -1;
             }
         }, numBlocks, lData, *this);
         Iterator::syncAll();
@@ -254,7 +375,7 @@ public:
 
     // can be done with a scan to get the individual particle start ?
     // and then the particles can be done in parallel at least ?
-
+            newSideOrder.resize(lData.numSideData);
     ManVec<lInd_t> particleSarts;
     particleSarts.resize(numParticles + 1, false);
     particleSarts[0] = 0;
@@ -262,7 +383,7 @@ public:
     stx::inclusive_scan(EXECPOLICY this->linksPerParticle.begin(), this->linksPerParticle.end(), particleSarts.begin() + 1);
 
     auto pStartPtr = particleSarts.data();
-    auto newOrderPtr = newOrder.data();
+    auto newSideOrderPtr = newSideOrder.data();
 
     Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(ind_t pInd, LData &lData, LinkAccelSide &accel){
         //
@@ -278,7 +399,7 @@ public:
             else {
                 ctInd = lData.sideIndEndB[lInd];
             }
-            newOrderPtr[orderInd] = ctInd;
+            newSideOrderPtr[orderInd] = ctInd;
             orderInd++;
         }
     }, numParticles, lData, *this);
@@ -286,9 +407,10 @@ public:
 
 
 #endif
+
         Iterator::syncAll();
 
-        lData.reorderSideData(newOrder);
+        lData.reorderSideDataPadded(newSideOrder, newSideOrder.size());
 
         // this could be a reorder as well but not sure its much faster
         generateLinks(pData, lData);

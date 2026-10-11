@@ -25,15 +25,7 @@
 #else
 #endif
 
-// launch bounds for AMD systems
-#if ENABLE_HIP == 1
-#define LBounds(MAX_THREADS_PER_BLOCK, MIN_WARPS_PER_EXECUTION_UNIT) __launch_bounds__(MAX_THREADS_PER_BLOCK, MIN_WARPS_PER_EXECUTION_UNIT)
-#else
-#define LBounds(MAX_THREADS_PER_BLOCK, MIN_WARPS_PER_EXECUTION_UNIT)
-#endif
-
 // partial implementation of a portability layer between HIP and cuda as i dont want to hipify the entire thing
-
 
 #if ENABLE_CUDA
 typedef cudaError_t devError_t;
@@ -240,7 +232,8 @@ inline devError_t devPeekAtLastError(){
 #endif
 }
 
-inline devError_t devMemAdvice(const void * ptr, size_t count, devMemoryAdvise advice, int device){
+/*
+inline devError_t devMemAdvice(const void * ptr, size_t count, devMemoryAdvise advice, cudaMemLocation device){
    #if ENABLE_CUDA
     return cudaMemAdvise(ptr, count, advice, device);
 #elif ENABLE_HIP
@@ -249,6 +242,7 @@ inline devError_t devMemAdvice(const void * ptr, size_t count, devMemoryAdvise a
     return 0;
 #endif
 }
+*/
 
 inline devError_t devDeviceGetPCIBusId(char* pciBusId, int  len, int  device) {
 #if ENABLE_CUDA

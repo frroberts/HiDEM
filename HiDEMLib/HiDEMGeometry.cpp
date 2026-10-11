@@ -43,7 +43,6 @@ void HiDEMGeometry::parseIceParam(const toml::value &tomlTable) {
                     << std::endl;
             exit(0);
         }
-        // double breakProbability = toml::find<double>(tomlBase, "breakLinkProbability");// tomlBase["breakLinkProbability"].as_floating_point()->get();
 
         // make these optional
         auto linkGenProb = MapLoader::MapFromToml(tomlBase, "linkGenerateProbability", 1.0);

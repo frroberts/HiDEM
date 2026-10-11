@@ -7,11 +7,9 @@
 
 
 #include <Global.h>
-#include <GlobalLocalMapper.h>
 #include <ManVec.h>
 #include <LinkData.h>
 #include <TupleHelpers.h>
-#include <Util/OwnedListGen.h>
 
 #include "HiDEMGlobal.h"
 #include "Generators/ElementrayLink.h"

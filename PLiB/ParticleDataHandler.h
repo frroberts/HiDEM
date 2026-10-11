@@ -7,6 +7,13 @@
 
 #include "Util/DropReorder.h"
 #include "Generators/ElementaryParticle.h"
+#include "H5IO/HDF5IO.h"
+#include "Logger/Logger.h"
+#include "LoggerV2/RangeCollection.h"
+#include "OutputWriters/CsvWriter.h"
+#include "OutputWriters/Hdf5Writer.h"
+#include "OutputWriters/VtkHdfWriter.h"
+#include "Util/OwnedListGen.h"
 
 // any autocomplete software will have a freakout about this file,
 // just trust that the template it inherits from provides the missing variables
@@ -51,12 +58,8 @@ public:
 
         Iterator::syncAll();
 
-        ParallelSort sorter;
-
-        sorter.sortDirect(this->ownedIndexes);
-        sorter.sortDirect(this->nonOwnedIndexes);
-        //std::sort(ownedIndexes.begin(), ownedIndexes.end());
-        //std::sort(nonOwnedIndexes.begin(), nonOwnedIndexes.end());
+        stx::sort(EXECPOLICY this->ownedIndexes.begin(), this->ownedIndexes.end());
+        stx::sort(EXECPOLICY this->nonOwnedIndexes.begin(), this->nonOwnedIndexes.end());
         Iterator::syncAll();
 
         callForTupleElem(this->getFieldTupleInput(), [&](auto vecPTr) {
@@ -76,12 +79,9 @@ public:
         });
     }
 
-
-
     void dropNonOwned() {
         xvtxRangePush("dropNonOwned particle");
         // this is just a memcpy
-
 
         ManVec<pInd_t> reorderOrder;
 
@@ -99,32 +99,6 @@ public:
         {
             reorderDevVecScratch(*vecPTr, reorderOrder, scratchSpace);
         });
-        /*
-
-        auto vecPtrs = this->getFieldTupleInput();
-
-        callForTupleElemRef(vecPtrs, [&] <typename T> (ManVec<T> *&vecPtr) {
-            vecPtr = new ManVec<T>();
-            vecPtr->resize(this->numLocal, false);
-        });
-
-        auto inputPtr = vecPtrToDataPtr(this->getFieldTupleInput());
-        auto outPtr = vecPtrToDataPtr(vecPtrs);
-
-        auto reorderPtr = reorderOrder.data();
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int ind) {
-            int reorderInd = reorderPtr[ind];
-            loadStorePtrTuple(ind, outPtr, reorderInd, inputPtr);
-        }, this->numLocal);
-
-        callForTuple2Elem(this->getFieldTupleInput(), vecPtrs, [] <typename T> (ManVec<T> *&aPtr, ManVec<T> *&bPtr) {
-            std::swap(*aPtr, *bPtr);
-        });
-
-        callForTupleElemRef(vecPtrs, [&] <typename T> (ManVec<T> *&vecPtr) {
-            delete vecPtr;
-        });
-        */
 
         resize(newSize);
 
@@ -138,7 +112,6 @@ public:
         xvtxRangePop();
 
     }
-
 
     void clear() {
         this->numLocal = 0;
@@ -172,6 +145,7 @@ public:
         generateOwnedNonOwned(this->owners, this->ownedIndexes,
                               this->nonOwnedIndexes, this->numLocal);
     }
+
     int getCurrentAllocated() {
         uint64_t sum = 0;
 
@@ -194,6 +168,102 @@ public:
             sum+= vecPTr->size();
         });
         return sum;
+    }
+
+
+    template<class... Names, class... Fields>
+    void snapshotParticlesIndex(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields,
+                                ManVec<pInd_t> &indexes, std::optional<std::string> &outParticleType,
+                                std::optional<std::string> &outParticleFile, std::optional<std::string> &outWorkingPath,
+                                int currentTimestep,
+                                std::string prefix = "") {
+        RangeV2 r("write particles", 2);
+        static_assert(sizeof...(Fields) == sizeof...(Names));
+
+        if (outParticleType && outParticleFile && !outParticleFile.value().empty()) {
+            std::string outputStr = outWorkingPath.value_or(".") + "/" + prefix + outParticleFile.value() +
+                                    std::to_string(currentTimestep);
+            // no these cant do inheritance they rely on templates
+            if (outParticleType.value() == "CSV") {
+                outputStr = outWorkingPath.value_or(".") + "/" + std::to_string(getLocalRank()) + "_" +
+                            prefix + outParticleFile.value() + std::to_string(currentTimestep);
+                CsvWriter partIo;
+                partIo.createFile(outputStr + ".csv");
+                partIo.writerParticlesIndexed(this->xCord, this->yCord, this->zCord, indexes, fieldNames,
+                                              vecPtrToDataPtr(outFields));
+                partIo.closeFile();
+            } else if (outParticleType.value() == "HDF5") {
+                Hdf5Writer partIo;
+                partIo.createFile(outputStr + ".h5");
+                partIo.writerParticlesIndexed(this->xCord, this->yCord, this->zCord, indexes, fieldNames,
+                                              vecPtrToDataPtr(outFields));
+                partIo.closeFile();
+            } else if (outParticleType.value() == "VTKHDF") {
+                VtkHdfWriter partIo;
+                partIo.createFile(outputStr + ".vtkhdf");
+                partIo.writerParticlesIndexed(this->xCord, this->yCord, this->zCord, indexes, fieldNames,
+                                              vecPtrToDataPtr(outFields));
+                partIo.closeFile();
+                //
+            } else {
+                Logger::writeAtFirst("Unsupported particle output type exiting ...");
+                exit(1);
+            }
+        }
+    }
+
+    void checkpointData(HDF5IO &h5) {
+        h5.openGroup("Particles");
+        HDF5Span span = h5.generateSpan(this->ownedIndexes.size());
+
+        auto fields = this->getFieldTupleInput();
+
+        int fieldInd = 0;
+        callForTupleElem(fields, [&](auto vec) {
+            h5.writeDataIndexedSpan(vec->data(), this->numLocal, this->ownedIndexes.data(),
+                                    "field_" + std::to_string(fieldInd), span);
+            fieldInd++;
+        });
+
+        h5.writeSpan(span);
+        h5.closeGroup();
+    }
+
+    void fromCheckpoint(HDF5IO &h5) {
+
+        h5.openGroup("Particles");
+
+        std::vector<HDF5Span> spans = h5.readSpan("");
+        int self = getLocalRank();
+
+        HDF5Span ownSpan;
+
+        int worldSize;
+        MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
+        if (spans.size() == worldSize) {
+            // normal read
+            ownSpan = spans[self];
+        } else {
+            std::cout << "restarting with different numer opf ranks is not supproted" << std::endl;
+            std::cout << "restart file has " << spans.size() << " ranks, current run uses " << worldSize << " ranks" <<
+                    std::endl;
+            exit(1);
+        }
+
+        int oldCount = this->numLocal;
+
+        this->resize(oldCount + ownSpan.localCount);
+
+        auto fields = this->getFieldTupleInput();
+        int fieldInd = 0;
+        callForTupleElem(fields, [&]<typename T>(ManVec<T> *vec) {
+            h5.readPtrSpann("field_" + std::to_string(fieldInd), &(vec->data()[oldCount]), ownSpan);
+
+            fieldInd++;
+        });
+        h5.closeGroup();
+
+        generateOwnedNonOwned(this->owners, this->ownedIndexes, this->nonOwnedIndexes, this->numLocal);
     }
 };
 

@@ -12,7 +12,6 @@
 #include "Util/ArgParser.h"
 #include "Geometry/GeometryCollection.h"
 #include "../PLiB/Accel/CombinedAccel.h"
-#include "OutputWriters/VtkParticles.h"
 #include <OutputWriters/VtkHdfWriter.h>
 #include <OutputWriters/Hdf5Writer.h>
 #include <Generators/ParticleGenerator.h>
@@ -70,8 +69,8 @@ public:
     ParticleDataHandler<PDataT> *pDataPtr;
     LinkDataHandler<LDataT> *lDataPtr;
 
-    GlobalLocalMapper<gKey_t, pInd_t> *lMapperPtr;
-    GlobalLocalMapper<gKey_t, pInd_t> *pMapperPtr;
+    OffloadHashMap<gKey_t, pInd_t> *lMapperPtr;
+    OffloadHashMap<gKey_t, pInd_t> *pMapperPtr;
 
     HiDEMGeometry geometry;
 
@@ -87,10 +86,12 @@ public:
     int redistributionInterval;
     int firstBalanceTimestep;
     bool dynamicRedistribution;
+
     bool writeEndCheckpoint;
     bool timestepCheckpoint;
     int checkpointInterval;
     std::string checkpointDirectory;
+    bool keepOldCheckpoint;
 
     HiDEMH5Checkpoint checkpoint;
 
@@ -100,6 +101,10 @@ public:
 
     int initBalancePoints;
     double initBalanceTolerance;
+
+    bool writeHelperStructures;
+
+    std::vector<int> statPrintIntervals;
 
     std::optional<std::string> outLinkFile;
     std::optional<std::string> outLinkType;
@@ -309,7 +314,7 @@ public:
     }
 
     template<class NFunc, class LFunc, class ... NeighArgs, class ... LinkArgs, class ... LinkSideArgs, class ... ForceArgs>
-    void computePartForce(NFunc &neighbourForceFunc, LFunc &linkForceFunc,
+    void computePartForce(NFunc neighbourForceFunc, LFunc linkForceFunc,
                           const std::tuple<NeighArgs...> neighArgs, const std::tuple<LinkArgs...> linkArgs, std::tuple<LinkSideArgs...> linkSideArgs, std::tuple<ForceArgs...> forceArgs
     ) {
         auto range = xvtxRangeStart("force");
@@ -475,16 +480,13 @@ public:
         auto outputStart = std::chrono::steady_clock::now();
         if (writeEndCheckpoint) {
             checkpoint.writeCheckpoint(currentTimestep, distr->world.domains[distr->world.self], *pDataPtr, *lDataPtr,
-                                       timestepCheckpoint, outWorkingPath.value_or(""), checkpointDirectory);
+                                       timestepCheckpoint,  keepOldCheckpoint, outWorkingPath.value_or(""), checkpointDirectory);
         }
 
         auto outputStop = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsedOutput = outputStop - outputStart;
 
         Logger::writeAtFirst("Output time " + Logger::getLimits(elapsedOutput.count(), "s") + " \n");
-
-        //EventCollection::writeAccumulated();
-        //EventCollection::clearHistory();
 
         MPI_Finalize();
     }
@@ -503,10 +505,14 @@ public:
         currentTimestep++;
         timeStep->increment();
 
-        if ((currentTimestep % 5000 == 0 && currentTimestep != 0) || currentTimestep == 100 || currentTimestep == 200 || currentTimestep == 1000 || currentTimestep == 2000) {
+        bool writeStats = false;
+        for (auto i: statPrintIntervals) {
+            writeStats |= (i == currentTimestep);
+        }
+        writeStats |= (currentTimestep % statPrintIntervals.back()) == 0;
+        if (writeStats) {
             Logger::writeAtFirst("timestep done " + std::to_string(currentTimestep) + "\n");
-            //EventCollection::writeAccumulated();
-            //EventCollection::clearHistory();
+
             computeActiveLinks(pDataPtr->iteratedLinks);
             computeIteratedNeighbours(pDataPtr->iteratedNeighbours);
             int64_t linksIterated = Iterator::reduceSumIndirect(pDataPtr->iteratedLinks.data(),
@@ -530,8 +536,9 @@ public:
         if (currentTimestep % checkpointInterval == 0 && checkpointInterval != -1 && currentTimestep != 0) {
             RangeV2 r("checkpoint IO", 2);
             checkpoint.writeCheckpoint(currentTimestep, distr->world.getOwnDomain(), *pDataPtr, *lDataPtr, timestepCheckpoint,
-                                       outWorkingPath.value_or(""),
+                                       keepOldCheckpoint, outWorkingPath.value_or(""),
                                        checkpointDirectory);
+            Logger::writeAtFirst("checkpoint written " + std::to_string(currentTimestep) + "\n");
         }
 
         bool needsRedistribute = currentTimestep == startTimestep;
@@ -564,7 +571,7 @@ public:
             Logger::writeAtFirst("redistribute ts: " + std::to_string(currentTimestep) + " \n");
             // Logger::writeAtFirst(fmt::format("redistribute ts: {} \n", ts));
             MPI_Barrier(MPI_COMM_WORLD);
-            distr->syncCT(*lDataPtr, *lMapperPtr);
+            distr->syncLinkSideData(*lDataPtr, *lMapperPtr);
 
             computeActiveLinks(pDataPtr->iteratedLinks);
             computeIteratedNeighbours(pDataPtr->iteratedNeighbours);
@@ -573,13 +580,10 @@ public:
                                 reBalanceTolerance);
             MPI_Barrier(MPI_COMM_WORLD);
 
-            // distr->world.domiansToVTKHDF("domains" + std::to_string(currentTimestep) + ".vtkhdf");
+            if (writeHelperStructures)
+                distr->world.domiansToVTKHDF(outWorkingPath.value_or(".") + "/domains" + std::to_string(currentTimestep) + ".vtkhdf");
 
             needsGridRegen = true;
-            // needed to not fail the link regen
-
-            //accel->generateLinks(*pDataPtr, *lDataPtr, searchDistance, interactDist);
-            //accel->lAccel.sortSideData(*pDataPtr, *lDataPtr);
         }
 
         if (needsGridRegen) {
@@ -598,6 +602,10 @@ public:
 
             accel->generatePrePostCommIndexes(*pDataPtr, *lDataPtr, distr->pForceComm);
             accel->generateNeighbours(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+            if (writeHelperStructures)
+                accel->grid.toVTKHDF(outWorkingPath.value_or(".") + "/grid_" + std::to_string(getLocalRank())
+                    + "_" + std::to_string(currentTimestep) + ".vtkhdf");
+
             xvtxRangePop();
 
             xvtxRangePush("regen links");
@@ -614,7 +622,6 @@ public:
             accel->generateIndexes(*pDataPtr, *lDataPtr, searchDistance, interactDist);
             xvtxRangePop();
 
-            Logger::writeAtFirst("Grid regen out \n", true);
             xvtxRangePop();
 
         }
@@ -624,72 +631,31 @@ public:
     // -----------------------------
     // IO functions
 
-    // void snapshotOutput(int ts);
     template<class... Names, class... Fields>
     void snapshotParticles(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields,
                            std::string prefix = "") {
-        snapshotParticlesIndex(fieldNames, outFields, pDataPtr->ownedIndexes);
+        pDataPtr->snapshotParticlesIndex(fieldNames, outFields, pDataPtr->ownedIndexes, outParticleType, outParticleFile, outWorkingPath, currentTimestep, prefix);
     }
 
-    // void snapshotOutput(int ts);
     template<class... Names, class... Fields, class FilterFun>
     void
     snapshotParticlesFilter(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields, FilterFun filter,
                             std::string prefix = "") {
         ManVec<pInd_t> indexes = filterIndexVec(pDataPtr->ownedIndexes, filter, *pDataPtr);
 
-        snapshotParticlesIndex(fieldNames, outFields, indexes);
+        pDataPtr->snapshotParticlesIndex(fieldNames, outFields, indexes, outParticleType, outParticleFile, outWorkingPath, currentTimestep, prefix);
     }
 
 
     template<class... Names, class... Fields>
     void snapshotParticlesIndex(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields,
                                 ManVec<pInd_t> &indexes, std::string prefix = "") {
-        // add compile time check that both tuples are the same size ?
-        RangeV2 r("write particles", 2);
-
-        if (outParticleType && outParticleFile && !outParticleFile.value().empty()) {
-            std::string outputStr = outWorkingPath.value_or(".") + "/" + prefix + outParticleFile.value() +
-                                    std::to_string(currentTimestep);
-            // no these cant do inheritance they rely on templates
-            if (outParticleType.value() == "CSV") {
-                outputStr = outWorkingPath.value_or(".") + "/" + std::to_string(getLocalRank()) + "_" +
-                            prefix + outParticleFile.value() + std::to_string(currentTimestep);
-                CsvWriter partIo;
-                partIo.createFile(outputStr + ".csv");
-                partIo.writerParticlesIndexed(pDataPtr->xCord, pDataPtr->yCord, pDataPtr->zCord, indexes, fieldNames,
-                                              vecPtrToDataPtr(outFields));
-                partIo.closeFile();
-            } else if (outParticleType.value() == "HDF5") {
-                Hdf5Writer partIo(HDF5Compression, HDF5CompressionLevel);
-                partIo.createFile(outputStr + ".h5");
-                partIo.writerParticlesIndexed(pDataPtr->xCord, pDataPtr->yCord, pDataPtr->zCord, indexes, fieldNames,
-                                              vecPtrToDataPtr(outFields));
-                partIo.closeFile();
-            } else if (outParticleType.value() == "VTK") {
-                VtkParticles partIo;
-                partIo.createFile(outputStr + ".vtk");
-                partIo.writerParticlesIndexed(pDataPtr->xCord, pDataPtr->yCord, pDataPtr->zCord, indexes, fieldNames,
-                                              vecPtrToDataPtr(outFields));
-                partIo.closeFile();
-            } else if (outParticleType.value() == "VTKHDF") {
-                VtkHdfWriter partIo(HDF5Compression, HDF5CompressionLevel);
-                partIo.createFile(outputStr + ".vtkhdf");
-                partIo.writerParticlesIndexed(pDataPtr->xCord, pDataPtr->yCord, pDataPtr->zCord, indexes, fieldNames,
-                                              vecPtrToDataPtr(outFields));
-                partIo.closeFile();
-                //
-            } else {
-                Logger::writeAtFirst("Unsupported particle output type exiting ...");
-                exit(1);
-            }
-        }
+        pDataPtr->snapshotParticlesIndex(fieldNames, outFields, indexes, outParticleType, outParticleFile, outWorkingPath, currentTimestep, prefix);
     }
 
     template<class... Names, class... Fields>
     void
     snapshotLinks(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields, std::string prefix = "") {
-        // add compile time check that both tuples are the same size ?
         snapshotLinksIndex(fieldNames, outFields, lDataPtr->ownedIndexes);
     }
 
@@ -697,41 +663,23 @@ public:
     void
     snapshotLinksFilter(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields, FilterFun filter,
                         std::string prefix = "") {
-        // add compile time check that both tuples are the same size ?
         ManVec<pInd_t> indexes = filterIndexVec(lDataPtr->ownedIndexes, filter, *lDataPtr);
 
-        snapshotLinksIndex(fieldNames, outFields, indexes);
+        lDataPtr->snapshotLinksIndex(fieldNames, outFields, indexes, outLinkType, outLinkFile, outWorkingPath, currentTimestep, prefix);
     }
 
     template<class... Names, class... Fields>
     void snapshotLinksIndex(const std::tuple<Names...> &fieldNames, const std::tuple<Fields...> &outFields,
                             ManVec<pInd_t> &indexes, std::string prefix = "") {
-        RangeV2 r("write links", 2);
-        if (outLinkType && outLinkFile && !outLinkFile.value().empty()) {
-            // no these cant do inheritance they rely on templates
-            if (outLinkType.value() == "CSV") {
-                std::string outputStr = outWorkingPath.value_or(".") + "/" + std::to_string(getLocalRank()) + "_" +
-                                        prefix + outLinkFile.value() + std::to_string(currentTimestep);
-                CsvWriter linkIo;
-                linkIo.createFile(outputStr + ".csv");
-                linkIo.writeIndexed(indexes, fieldNames, vecPtrToDataPtr(outFields));
-                linkIo.closeFile();
-            } else if (outLinkType.value() == "HDF5") {
-                std::string outputStr =
-                        outWorkingPath.value_or(".") + "/" + prefix + outLinkFile.value() + std::to_string(currentTimestep);
-                Hdf5Writer linkIo(HDF5Compression, HDF5CompressionLevel);
-                linkIo.createFile(outputStr + ".h5");
-                linkIo.writeIndexed(indexes, lDataPtr->numLocal, fieldNames, vecPtrToDataPtr(outFields));
-                linkIo.closeFile();
-            } else {
-                Logger::writeAtFirst("Unsupported link output type exiting ...");
-                exit(1);
-            }
-        }
+        lDataPtr->snapshotLinksIndex(fieldNames, outFields, indexes, outLinkType, outLinkFile, outWorkingPath, currentTimestep, prefix);
     }
 
+    // change when new mesh is defined
     template<class... Names, class... Fields>
     void snapshotMesh(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields, std::string prefix = "") {
+        RangeV2 r("write mesh", 2);
+        static_assert(sizeof...(Fields) == sizeof...(Names));
+
         getCollisionMeshPtr()->reduceForces();
         // add compile time check that both tuples are the same size ?
         if (outMeshType && outMeshFile && !outMeshFile.value().empty()) {
@@ -777,13 +725,20 @@ public:
         redistributionInterval = parser.getArg<int>("distribution.redistributionInterval").value_or(100);
         firstBalanceTimestep = parser.getArg<int>("distribution.firstBalanceTimestep").value_or(2000);
         dynamicRedistribution = parser.getArg<bool>("distribution.dynamicRedistribution").value_or(true);
+
         writeEndCheckpoint = parser.getArg<bool>("restart.writeEndCheckpoint").value_or(false);
         timestepCheckpoint = parser.getArg<bool>("restart.timestepCheckpoint").value_or(false);
+        keepOldCheckpoint = parser.getArg<bool>("restart.keepOld").value_or(false);
         checkpointInterval = parser.getArg<int>("restart.checkpointInterval").value_or(10000);
         checkpointDirectory = parser.getArg<std::string>("restart.checkpointDirectory").value_or("checkpoints");
 
+        writeHelperStructures = parser.getArg<bool>("output.writeHelperStructures").value_or(false);
+
         HDF5Compression = parser.getArg<bool>("HDF5.compression").value_or(false);
         HDF5CompressionLevel = parser.getArg<int>("HDF5.compressionLevel").value_or(4);
+        HDF5IO::compression = HDF5Compression;
+        HDF5IO::compressionLevel = HDF5CompressionLevel;
+
         HDF5AsyncIO = parser.getArg<bool>("HDF5.async").value_or(true);
 
         searchDistanceScale = parser.getArg<double>("grid.searchDistanceScale").value_or(1.4);
@@ -791,6 +746,8 @@ public:
 
         linkRegenEnabled = parser.getArg<bool>("linkRegen.enabled").value_or(false);
 
+        statPrintIntervals = parser.getArg<std::vector<int>>("output.statIntervals").value_or(
+            std::vector{100,200,1000,5000,10000,20000,50000});
 
         auto tomlTable = parser.table;
 
@@ -832,10 +789,10 @@ public:
 
         buildData(*distr, searchDistance * haloScale, reBalanceTolerance);
 
-        lMapperPtr = new GlobalLocalMapper<gKey_t, pInd_t>();
+        lMapperPtr = new OffloadHashMap<gKey_t, pInd_t>();
         auto &lMapper = *lMapperPtr;
 
-        pMapperPtr = new GlobalLocalMapper<gKey_t, pInd_t>();
+        pMapperPtr = new OffloadHashMap<gKey_t, pInd_t>();
         auto &pMapper = *pMapperPtr;
 
         pDataPtr->remap(pMapper);
@@ -894,12 +851,13 @@ public:
         lDataPtr = new LinkDataHandler<LDataT>();
         // todo fix betteer at some point
         lDataPtr->keepInactive = linkRegenEnabled;
-        GlobalLocalMapper<gKey_t, pInd_t> *pMapperPtr = new GlobalLocalMapper<gKey_t, pInd_t>();
+        OffloadHashMap<gKey_t, pInd_t> *pMapperPtr = new OffloadHashMap<gKey_t, pInd_t>();
         auto &pMapper = *pMapperPtr;
         auto *pTrans = new ParticleTrasporterV2<PDataT>();
 
         if (fromRestart) {
-            checkpoint.readParticleDataTup(*pDataPtr);
+            pDataPtr->fromCheckpoint(checkpoint.h5);
+            // checkpoint.readParticleDataTup(*pDataPtr);
             pDataPtr->remap(pMapper);
             Logger::writeAtFirst("Particles loaded: " + Logger::getStats(pDataPtr->numLocal, "particles") + "\n");
 
@@ -907,7 +865,7 @@ public:
             pTrans->getIncomming(*pDataPtr);
             pDataPtr->remap(pMapper);
 
-            checkpoint.readLinkData(*lDataPtr);
+            lDataPtr->fromCheckpoint(checkpoint.h5);
             Logger::writeAtFirst("Links loaded: " + Logger::getStats(lDataPtr->numLocal, "links") + "\n");
 
         } else {
@@ -947,13 +905,10 @@ public:
         }
         lDataPtr->makeLocalPartEnds(pMapper);
 
-        auto *lMapperPtr = new GlobalLocalMapper<gKey_t, pInd_t>();
+        auto *lMapperPtr = new OffloadHashMap<gKey_t, pInd_t>();
         auto &lMapper = *lMapperPtr;
 
         lDataPtr->remap(lMapper);
-
-        // dont sync CT as the neighbours at this stage dont have any
-        // distr.reDistribute(*pDataPtr, *lDataPtr, pMapper, lMapper, haloSize, reBalanceTolerance);
 
         delete pMapperPtr;
         delete lMapperPtr;
@@ -966,7 +921,7 @@ public:
     void regenerateAllLinks(){
         RangeV2 r("refreeze", 3);
         {
-            distr->syncCT(*lDataPtr, *lMapperPtr);
+            distr->syncLinkSideData(*lDataPtr, *lMapperPtr);
 
             RangeV2 r("drop broken non owned links", 3);
             lDataPtr->dropBrokenNonOwnedLinks();
@@ -993,7 +948,7 @@ public:
             lDataPtr->remap(*lMapperPtr);
             // todo make an option to connect a subset only
             lDataPtr->connectParticleLinks(*pMapperPtr);
-            distr->lCTComm.initFromTransporter(*distr->lTrans);
+            distr->linkSideComm.initFromTransporter(*distr->lTrans);
 
             distr->linkStateComm.initFromTransporter(*distr->lTrans);
             distr->linkStateComm.tagStart = 128;

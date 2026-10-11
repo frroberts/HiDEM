@@ -19,13 +19,11 @@
 #include "LinkDataHandler.h"
 #include "Transport/ParticleTransporter.h"
 
-#define maxBB 1000
-
 template<typename PDataT, typename LDataT>
 class HiDEMDistribution : public ManagedParent {
     //
 public:
-    CommunicatorPacked<ctReal_t, 6> lCTComm;
+    CommunicatorPacked<ctReal_t, 6> linkSideComm;
     CommunicatorPacked<lpReal_t, 6> pForceComm;
     CommunicatorPacked<uint8_t, 1> linkStateComm;
 
@@ -34,9 +32,9 @@ public:
 
     bool reBalanceActive;
 
-    ManVec<double> xCord;
-    ManVec<double> yCord;
-    ManVec<double> zCord;
+    ManVec<hpReal_t> xCord;
+    ManVec<hpReal_t> yCord;
+    ManVec<hpReal_t> zCord;
     ManVec<double> weights;
 
     NeighbourGrid *grids[4];
@@ -58,31 +56,29 @@ public:
         }
     };
 
-    void syncCT(LDataT &lData, GlobalLocalMapper<gKey_t, lInd_t> &lMapper) {
-        //xvtxRangePush("CT sync links");
+    void syncLinkSideData(LDataT &lData, OffloadHashMap<gKey_t, lInd_t> &lMapper) {
         // syncAll up CT from all halos
 
-        lCTComm.initFromTransporter(*lTrans);
+        linkSideComm.initFromTransporter(*lTrans);
 
-        lCTComm.invert();
-        lCTComm.tagStart = 64 + 12 + 12;
-        lCTComm.setupBuffers();
+        linkSideComm.invert();
+        linkSideComm.tagStart = 64 + 12 + 12;
+        linkSideComm.setupBuffers();
 
-        lCTComm.makeLocalIndexes(lMapper);
-        lCTComm.indirectIndexes(lData.sideIndEndB, lData.sideIndEndB);
+        linkSideComm.makeLocalIndexes(lMapper);
+        linkSideComm.indirectIndexes(lData.sideIndEndB, lData.sideIndEndB);
 
-        lCTComm.packAllCommData(packVecPtrs(lData.CT0_flat, lData.CT1_flat, lData.CT2_flat, lData.CT3_flat, lData.CT4_flat, lData.CT5_flat));
+        linkSideComm.packAllCommData(packVecPtrs(lData.CT0_flat, lData.CT1_flat, lData.CT2_flat, lData.CT3_flat, lData.CT4_flat, lData.CT5_flat));
 
         Iterator::syncAll();
 
-        lCTComm.postRecvs();
-        lCTComm.postSends();
-        lCTComm.syncRecvs();
-        lCTComm.syncSends();
+        linkSideComm.postRecvs();
+        linkSideComm.postSends();
+        linkSideComm.syncRecvs();
+        linkSideComm.syncSends();
 
-        lCTComm.unpackAllCommData(packVecPtrs(lData.CT0_flat, lData.CT1_flat, lData.CT2_flat, lData.CT3_flat, lData.CT4_flat, lData.CT5_flat));
+        linkSideComm.unpackAllCommData(packVecPtrs(lData.CT0_flat, lData.CT1_flat, lData.CT2_flat, lData.CT3_flat, lData.CT4_flat, lData.CT5_flat));
         Iterator::syncAll();
-        //xvtxRangePop();
     }
 
     HiDEMDistribution(bool reBalance, double searchDistance) : reBalanceActive(reBalance) {
@@ -100,7 +96,7 @@ public:
     }
 
     //
-    void distribute(PDataT &pData, LDataT &lData, GlobalLocalMapper<gKey_t, pInd_t> &pMapper, GlobalLocalMapper<gKey_t, lInd_t> &lMapper) {
+    void distribute(PDataT &pData, LDataT &lData, OffloadHashMap<gKey_t, pInd_t> &pMapper, OffloadHashMap<gKey_t, lInd_t> &lMapper) {
         RangeV2 r("distribution step", 3);
 
         pTrans->clear();
@@ -128,8 +124,6 @@ public:
 
         // possibly reorder particle stuff here ?
         lTrans->getIncomming(lData);
-        //lData.dropNonOwnedLinks();
-        //lData.dropBrokenLinks();
         lData.dropBrokenNonOwnedLinks();
 
         // possibly reorder link stuff here ?
@@ -203,7 +197,7 @@ public:
         r7.end();
     }
 
-    void reDistribute(PDataT &pData, LDataT &lData, GlobalLocalMapper<gKey_t, pInd_t> &pMapper, GlobalLocalMapper<gKey_t, lInd_t> &lMapper,
+    void reDistribute(PDataT &pData, LDataT &lData, OffloadHashMap<gKey_t, pInd_t> &pMapper, OffloadHashMap<gKey_t, lInd_t> &lMapper,
                       double haloSize, double redistTolerance) {
         if (reBalanceActive) {
             int numOwned = pData.ownedIndexes.size();
@@ -213,9 +207,9 @@ public:
             zCord.resize(numOwned);
             weights.resize(numOwned);
 
-            double *xCordPtr = xCord.data();
-            double *yCordPtr = yCord.data();
-            double *zCordPtr = zCord.data();
+            hpReal_t *xCordPtr = xCord.data();
+            hpReal_t *yCordPtr = yCord.data();
+            hpReal_t *zCordPtr = zCord.data();
             double *weightsPtr = weights.data();
 
             Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (ind_t i, HiDEMParticleData &pData, LDataT &lData, HiDEMDistribution &dist) {

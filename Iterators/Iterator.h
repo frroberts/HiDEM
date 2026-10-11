@@ -25,7 +25,7 @@ namespace {
         template<class Tind,class F, class... Args>
         __global__ void iterateKern(F fun, Tind max, [[maybe_unused]] Args &... args) {
             //
-            int idx = blockIdx.x * blockDim.x + threadIdx.x;
+            size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 
             if (idx >= max) return;
 
@@ -35,7 +35,7 @@ namespace {
         template<class Tind,class F, class... Args>
         __global__ void iterateBlockedKern(F fun, Tind max, [[maybe_unused]] Args &... args) {
             //
-            int idx = blockIdx.x * blockDim.x + threadIdx.x;
+            size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 
             if (idx >= max) return;
 
@@ -45,7 +45,7 @@ namespace {
         template<class Tind,class F, class... Args>
         __global__ void iterateIndirectKern(F fun, Tind max, Tind *indexes, [[maybe_unused]] Args &... args) {
             //
-            int idx = blockIdx.x * blockDim.x + threadIdx.x;
+            size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
 
             if (idx >= max) return;
             fun(indexes[idx], args...);
@@ -65,11 +65,11 @@ namespace {
 
         template<class Tind,class T>
         __global__ void copyItoDMulti(Tind max, Tind **indexes, T **from, T **to) {
-            int i = blockIdx.x * blockDim.x + threadIdx.x;
+            size_t i = blockIdx.x * blockDim.x + threadIdx.x;
             int ptrInd = threadIdx.y;
             if (i >= max) return;
 
-            int indirectInd = indexes[ptrInd][i];
+            size_t indirectInd = indexes[ptrInd][i];
 
             to[ptrInd][i] = from[ptrInd][indirectInd];
         }
@@ -338,7 +338,7 @@ namespace {
             template<class Tind, class F, class... Args>
             static void iterate([[maybe_unused]] bool parallel, F fun, Tind max, [[maybe_unused]] Args &... args) {
 #pragma omp parallel for if(parallel)
-                for (int x = 0; x < max; x++) {
+                for (size_t x = 0; x < max; x++) {
                     fun(x, args...);
                 }
             }
@@ -346,7 +346,7 @@ namespace {
             template<class Tind, class F, class... Args>
             static void iterateIndirect([[maybe_unused]] bool parallel, F fun, ManVec<Tind> &indexes, [[maybe_unused]] Args &... args) {
 #pragma omp parallel for if(parallel)
-                for (int x = 0; x < indexes.size(); x++) {
+                for (size_t x = 0; x < indexes.size(); x++) {
                     fun(indexes[x], args...);
                 }
             }
@@ -354,10 +354,10 @@ namespace {
             template<class Tind, class F, class... Args>
             static void iterate3D([[maybe_unused]] bool parallel, F fun, Tind xMax, Tind yMax, Tind zMax, [[maybe_unused]] Args &... args) {
 #pragma omp parallel for if(parallel)
-                for (int x = 0; x < xMax; x++) {
-                    for (int y = 0; y < yMax; y++) {
+                for (Tind x = 0; x < xMax; x++) {
+                    for (Tind y = 0; y < yMax; y++) {
 #pragma omp simd
-                        for (int z = 0; z < zMax; z++) {
+                        for (Tind z = 0; z < zMax; z++) {
                             fun(x, y, z, args...);
                         }
                     }
@@ -573,7 +573,7 @@ namespace {
         }
 
         template<typename Tdat, typename Tind>
-        static void gather([[maybe_unused]] OffloadExec pol, Tdat *targetBuffer, Tdat *fromBuffer, Tind *indexes, int count) {
+        static void gather([[maybe_unused]] OffloadExec pol, Tdat *targetBuffer, Tdat *fromBuffer, Tind *indexes, size_t count) {
             Iterator::iterate(pol, [=] DEVCALLABLE (Tind i){
                 targetBuffer[i] = fromBuffer[indexes[i]];
                 }, count);
@@ -581,25 +581,26 @@ namespace {
 
 
         template<typename Tdat, typename Tind>
-        static void scatter([[maybe_unused]] OffloadExec pol, Tdat *targetBuffer, Tdat *fromBuffer, Tind *indexes, int count) {
+        static void scatter([[maybe_unused]] OffloadExec pol, Tdat *targetBuffer, Tdat *fromBuffer, Tind *indexes, size_t count) {
             Iterator::iterate(pol, [=] DEVCALLABLE (Tind i){
                 targetBuffer[indexes[i]] = fromBuffer[i];
                 }, count);
         }
 
         template<typename Tdat>
-        static void copy(Tdat *targetBuffer, Tdat *fromBuffer, int count) {
+        static void copy(Tdat *targetBuffer, Tdat *fromBuffer, size_t count) {
             // this is really a memcpy
             // if building for GPU check what the pointer is and do cudamemcpy if it is, or just allow the runtime to determine it
 #ifdef GPU
             getErrorDevApi(devMemcpy (targetBuffer , fromBuffer, count, devMemcpyDefault));
+            Iterator::syncAll();
 #else
             std::memcpy (targetBuffer , fromBuffer, count);
 #endif
         }
 
         template<typename Tdat, typename Tind>
-        static Tdat reduceSumIndirect(Tdat *buffer, Tind *indexes, int count) {
+        static Tdat reduceSumIndirect(Tdat *buffer, Tind *indexes, size_t count) {
             return IteratorHost::reduceSumIndirect(true, buffer, indexes, count);
         }
 

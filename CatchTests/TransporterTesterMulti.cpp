@@ -179,7 +179,7 @@ TEST_CASE( "Test full 2 rank reassign and transport and halo transport", "[Trasn
         {
             int numLinkedHalo = 0;
             int otherOwner = -1;
-            ind_t pInd = pMapper.getLocalInd(4);
+            ind_t pInd = pMapper.getValue(4);
             lData.iterateParticleLinks([&](ind_t lInd, ind_t pIndOhter, HiDEMLinkData &ldata){
                 if(lData.owners[pIndOhter] != world.self) {
                     numLinkedHalo++;
@@ -193,7 +193,7 @@ TEST_CASE( "Test full 2 rank reassign and transport and halo transport", "[Trasn
         {
             int numLinkedHalo = 0;
             int otherOwner = -1;
-            ind_t pInd = pMapper.getLocalInd(5);
+            ind_t pInd = pMapper.getValue(5);
             lData.iterateParticleLinks([&](ind_t lInd, ind_t pIndOhter, HiDEMLinkData &ldata){
                 if(lData.owners[pIndOhter] != world.self) {
                     numLinkedHalo++;

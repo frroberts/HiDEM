@@ -31,10 +31,11 @@ public:
         int incomingCount = syncTargets();
 
         int oldSize = lData.numLocal;
+        int oldSideSize = lData.numSideData;
         int newSize = oldSize + incomingCount;
 
         lData.resize(newSize);
-        lData.resizeSideData(newSize*2);
+        lData.resizeSideData(oldSideSize + incomingCount*2);
 
         std::vector<TransportTargetV2> sideOutTargets;
         std::vector<TransportTargetV2> sideInTargets;
@@ -51,7 +52,7 @@ public:
         }
         sideIndexesIn.resize(sideSize * 2);
 
-        for (int i = 0; i < outTargets.size(); i++) {
+        for (size_t i = 0; i < outTargets.size(); i++) {
             sideOutTargets[i].targetRank = outTargets[i].targetRank;
             sideOutTargets[i].count = 2 * outTargets[i].count;
             sideOutTargets[i].offset = outTargets[i].offset * 2;
@@ -64,17 +65,10 @@ public:
                 sideOutPtr[(j * 2)] = lData.sideIndEndA[ind];
                 sideOutPtr[(j * 2) + 1] = lData.sideIndEndB[ind];
             }, outTargets[i].count, lData);
-            /*
-            for (int j = 0; j < outTargets[i].count; j++) {
-                int ind = outTargets[i].indexesPtr[j];
-                sideOutTargets[i].indexesPtr[(j * 2)] = lData.sideIndEndA[ind];
-                sideOutTargets[i].indexesPtr[(j * 2) + 1] = lData.sideIndEndB[ind];
-            }
-            */
         }
         Iterator::syncAll();
 
-        for (int i = 0; i < inTargets.size(); i++) {
+        for (size_t i = 0; i < inTargets.size(); i++) {
             sideInTargets[i].count = 2 * inTargets[i].count;
             sideInTargets[i].targetRank = inTargets[i].targetRank;
             sideInTargets[i].offset = inTargets[i].offset * 2;
@@ -83,11 +77,14 @@ public:
         }
 
         transmitFiledsFull(oldSize, lData.getFieldTupleInput(), outTargets, inTargets);
-        transmitFiledsFull(oldSize*2, lData.getFieldTupleSideInput(), sideOutTargets, sideInTargets);
+        transmitFiledsFull(oldSideSize, lData.getFieldTupleSideInput(), sideOutTargets, sideInTargets);
 
+        pInd_t outSideInd = oldSideSize;
         for(int i = oldSize; i < newSize; i++){
-            lData.sideIndEndA[i] = i*2;
-            lData.sideIndEndB[i] = (i*2)+1;
+            lData.sideIndEndA[i] = outSideInd;
+            ++outSideInd;
+            lData.sideIndEndB[i] = outSideInd;
+            ++outSideInd;
             lData.localPartIndA[i] = -1;
             lData.localPartIndB[i] = -1;
         }
@@ -104,7 +101,7 @@ public:
 
         int numDomains = world.domains.size();
 
-        for (int i = 0; i < world.domains.size(); ++i) {
+        for (size_t i = 0; i < world.domains.size(); ++i) {
             int pos = world.domains[i].owner;
             outTargets[pos].count = 0;
             outTargets[pos].targetRank = world.domains[i].owner;
@@ -175,11 +172,7 @@ public:
         packOutgoingGetRank(world, pData, lData,
                             [=] DEVCALLABLE (pInd_t aParticleInd, pInd_t bParticleInd, lInd_t lInd, ParticleData &pData, LinkData &lData) {
                                 int targetRank = -1;
-                                /*
-                                if (pData.owners[aParticleInd] != self) {
-                                    targetRank = pData.owners[aParticleInd];
-                                } else
-                                */
+
                                 // owner should always be particle A
                                 if (pData.owners[bParticleInd] != self) {
                                     targetRank = pData.owners[bParticleInd];
@@ -194,7 +187,7 @@ public:
         packOutgoingGetRank(world, pData, lData,
                             [=] DEVCALLABLE (pInd_t aParticleInd, pInd_t bParticleInd, lInd_t lInd, ParticleData &pData, LinkData &lData) {
                                 int targetRank = lData.owners[lInd];
-                                if (targetRank != self){ // && lData.state[lInd] != 0) {
+                                if (targetRank != self){
                                     return targetRank;
                                 } else {
                                     return -1;

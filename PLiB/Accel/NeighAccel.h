@@ -11,12 +11,9 @@
 #include "../NeighbourGrid.h"
 #include "../Util/Layout.h"
 
-
-//template<class Layout>
 class NeighAccel : public ManagedParent {
 
 public:
-    //Layout layout;
 
     size_t maxNeighbours = 0;
     ManVec<pInd_t> list; // nParticles*maxNeighbours
@@ -34,29 +31,18 @@ public:
         generateNumNeigh(searchDistance2, grid, pData, interactDist);
 
         Iterator::syncAll();
-        // todo needs to be size_t, fix reducer at some point
-        ParallelReduce<int> reducer;
-        int sum = 0;
         int max = 0;
         int min = 0;
-        sum = reducer.sum(numNeighs);
-        reducer.minMax(min, max, numNeighs);
+        ParallelReduce<int>::minMax(min, max, numNeighs);
         listStarts.resize(pData.numLocal);
+        size_t sum = 0;
         sum = pData.numLocal * max;
 
         maxNeighbours = max;
 
-#ifdef SOA_NLIST
         Iterator::iterate(OffloadExec(),[] DEVCALLABLE (ind_t i, NeighAccel &nList){
-                    nList.listStarts[i] = i;
+            nList.listStarts[i] = i;
         }, pData.numLocal, *this);
-#else
-        //ParallelScan scanner;
-        //scanner.exclusive(numNeighs, listStarts);
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE(pInd_t i, NeighAccel &nList) {
-            nList.listStarts[i] = i * max;
-        }, pData.numLocal, *this);
-#endif
 
         list.resize(sum);
 
@@ -68,9 +54,7 @@ public:
         });
 
         Iterator::syncAll();
-
     }
-
 
     template<typename Fun, class... Args>
     DEVCALLABLE
@@ -82,34 +66,24 @@ public:
             fun(nInd,  args...);
         }
     }
+
     // these should be private but ... cuda...
-        DEVCALLABLE
+    DEVCALLABLE
     pInd_t getPartNeighId(int n, pInd_t pInd) {
-
-
         size_t target;
-#ifdef SOA_NLIST
         target = pInd + (n * numPraticlesAllocated);
-#else
-        target = n + (pInd * maxNeighbours);
-#endif
         return list[target];
     }
 
     DEVCALLABLE
     void setPartNeighId(int n, pInd_t pInd, pInd_t val) {
         size_t target;
-#ifdef SOA_NLIST
         target = pInd + (n * numPraticlesAllocated);
-#else
-        target = n + (pInd * maxNeighbours);
-#endif
         list[target] = val;
     }
 
     void generateNumNeigh(double searchDistance2, NeighbourGrid &grid, ParticleData &pData, double interactDist) {
         numNeighs.resize(pData.numLocal);
-
 
         Iterator::iterate(OffloadExec(), [] DEVCALLABLE(pInd_t i, NeighAccel &nList) {
             nList.numNeighs[i] = 0;
@@ -124,53 +98,38 @@ public:
     void iterateBlocks(NeighbourGrid &grid, ParticleData &pData, double interactDist, Fun nFunc) {
         double interactDist2 = interactDist*interactDist;
 
-        pData.iterateOwnedParticles(OffloadExec(), [=] DEVCALLABLE(pInd_t pInd, ParticleData &pData, NeighbourGrid &grid, NeighAccel &nList) {
+        pData.iterateOwnedParticles(OffloadExec(), [=] DEVCALLABLE (pInd_t pInd, ParticleData &pData, NeighbourGrid &grid, NeighAccel &nList) {
             //
             int neighbours = 0;
 
-            int color = grid.colours[pInd];
+            int64_t color = grid.colours[pInd];
 
-            double xCord = pData.xCord[pInd];
-            double yCord = pData.yCord[pInd];
-            double zCord = pData.zCord[pInd];
+            hpReal_t xCord = pData.xCord[pInd];
+            hpReal_t yCord = pData.yCord[pInd];
+            hpReal_t zCord = pData.zCord[pInd];
 
-            for (int n = 0; n < 27; ++n) {
-                int targetBucket = grid.targetBuckets[(color) + (n * grid.totalCells)];
-                // skip if the bucket does not exist, i.e. if the target bucket is -1
-                if (targetBucket == -1)
-                    continue;
-                ind_t i = grid.bucketStarts[targetBucket];
-                ind_t end = i + grid.bucketSizes[targetBucket];
-                for (; i < end; ++i) {
+            grid.iteratePossibleNeighbours([&](size_t nInd) {
+                hpReal_t xCordOther = pData.xCord[nInd];
+                lpReal_t xDist = xCord - xCordOther;
+                lpReal_t xDist2 = xDist * xDist;
 
-                    pInd_t nInd = grid.iterationOrder[i];
+                hpReal_t yCordOther = pData.yCord[nInd];
+                lpReal_t yDist = yCord - yCordOther;
+                lpReal_t yDist2 = yDist * yDist;
 
-                    if (nInd == pInd) {
-                        continue;
-                    }
+                hpReal_t zCordOther = pData.zCord[nInd];
+                lpReal_t zDist = zCord - zCordOther;
+                lpReal_t zDist2 = zDist * zDist;
 
-                    double xCordOther = pData.xCord[nInd];
-                    double xDist = xCord - xCordOther;
-                    double xDist2 = xDist * xDist;
+                lpReal_t particleDistance2 = xDist2 + yDist2 + zDist2;
+                lpReal_t particleDistance = sqrt(particleDistance2);
+                lpReal_t radSum = pData.radius[pInd] + pData.radius[nInd];
+                lpReal_t dist = particleDistance - radSum;
 
-                    double yCordOther = pData.yCord[nInd];
-                    double yDist = yCord - yCordOther;
-                    double yDist2 = yDist * yDist;
-
-                    double zCordOther = pData.zCord[nInd];
-                    double zDist = zCord - zCordOther;
-                    double zDist2 = zDist * zDist;
-
-                    double particleDistance2 = xDist2 + yDist2 + zDist2;
-                    double particleDistance = sqrt(particleDistance2);
-                    double radSum = pData.radius[pInd] + pData.radius[nInd];
-                    double dist = particleDistance - radSum;
-
-                    if (dist < interactDist) {
-                        nFunc(pInd, nInd, nList, neighbours);
-                    }
+                if (dist < interactDist) {
+                    nFunc(pInd, nInd, nList, neighbours);
                 }
-            }
+            }, pInd, color, true);
 
 
             nList.numNeighs[pInd] = neighbours;

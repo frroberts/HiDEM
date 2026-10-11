@@ -25,6 +25,7 @@ option(ENABLE_ASAN "Enables address sanitizer builds" OFF)
 option(ENABLE_UBSAN "Enables undefined behavior sanitizer builds" OFF)
 
 option(ENABLE_STACKTRACE "Enable stacktraces from certain failures (requires GCC)" OFF)
+option(ENABLE_UNWIND "Enable stacktraces from certain failures (uses libunwind, and thus requires it)" OFF)
 
 
 ## optimizations
@@ -85,8 +86,26 @@ endif ()
 
 if (ENABLE_CUDA)
     check_language(CUDA REQUIRED)
-    set(CMAKE_CUDA_ARCHITECTURES "75")
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr -std=c++20 -lineinfo -g -allow-unsupported-compiler -lcurand" )
+
+    set(VALID_ARCHS 90 120)
+    set(GPU_ARCH "" CACHE STRING "Target CUDA compute capability (one of: ${VALID_ARCHS})")
+
+    if(NOT GPU_ARCH)
+        set(GPU_ARCH 75)
+        message("Defaulting to compute capability 75, use -DGPU_ARCH=XX to change")
+    endif()
+
+    if(NOT GPU_ARCH IN_LIST VALID_ARCHS)
+        message(FATAL_ERROR "GPU_ARCH=${GPU_ARCH} is not supported. Valid options: ${VALID_ARCHS}")
+    endif()
+
+    message(STATUS "Building for CUDA compute capability sm_${GPU_ARCH}")
+
+    set(CMAKE_CUDA_ARCHITECTURES ${GPU_ARCH})
+
+
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr -std=c++20 -lineinfo -lcurand -use_fast_math")
+            # -g -allow-unsupported-compiler --ptxas-options=-v -Wall" )
 
     enable_language(CUDA)
 

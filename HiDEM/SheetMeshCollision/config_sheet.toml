@@ -1,6 +1,6 @@
 [general]
 # set size scale of particles and the entire system
-scale = 10.0
+scale = 8.0
 
 g = 9.81
 beamWidth = 1.2
@@ -40,7 +40,7 @@ outputInterval = 5000
 [externalForce]
 # external forces to be applied each time step
 # this section is under development, and will change when force changing over time gets implemented
-xForce = 200000.0
+xForce = 2000000.0
 yForce = 0.0
 zForce = 0.0
 uForce = 0.0
@@ -126,7 +126,7 @@ yBoundaryMax = true
 
 [[iceParameters]]
 # glacier
-linkGenerateProbability = 1.0
+linkGenerateProbability = 0.9
 boundingGeometry = "sheet AND bb NOT (cone)"
 linkWith = [0]
 
@@ -134,7 +134,7 @@ linkWith = [0]
 type = "box"
 name = "sheet"
 upper =[1900, 900, 385]
-lower = [-2000, -900, 365]
+lower = [-2000, -900, 360]
 
 [[geometry]]
 type = "box"

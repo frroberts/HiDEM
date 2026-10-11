@@ -5,10 +5,11 @@
 #include <catch2/catch.hpp>
 #include <NeighbourGrid.h>
 
+#include "ParticleDataHandler.h"
 #include "TestHelpers.h"
 
 TEST_CASE( "Generate neighbour grid test", "[Neighbour grid]" ) {
-    HiDEMParticleData data;
+    ParticleDataHandler<HiDEMParticleData> data;
 
     generateBox(&data, 3, 1);
 
@@ -23,15 +24,15 @@ TEST_CASE( "Generate neighbour grid test", "[Neighbour grid]" ) {
 }
 
 TEST_CASE( "Generate neighbour grid test asymetric", "[Neighbour grid]" ) {
-    HiDEMParticleData data;
+    ParticleDataHandler<HiDEMParticleData> data;
 
-    ManVec<HiDEMTransportParticle> particles;
+    ManVec<ElementaryParticle> particles;
     int key = 0;
     for (int x = 0; x < 2; ++x) {
         for (int y = 0; y < 3; ++y) {
             for (int z = 0; z < 4; ++z) {
                 //
-                HiDEMTransportParticle p;
+                ElementaryParticle p;
                 p.owner = 0;
                 p.cord = {(double)x,(double)y,(double)z};
                 p.globalKey = key;
@@ -40,7 +41,7 @@ TEST_CASE( "Generate neighbour grid test asymetric", "[Neighbour grid]" ) {
         }
     }
 
-    data.appendTransportParticles(particles);
+    data.appendInitParticles(particles);
 
     NeighbourGrid grid;
     grid.generate(data, 1.0);
@@ -53,7 +54,7 @@ TEST_CASE( "Generate neighbour grid test asymetric", "[Neighbour grid]" ) {
 
 
 TEST_CASE( "Colour particle test", "[Neighbour grid]" ) {
-    HiDEMParticleData data;
+    ParticleDataHandler<HiDEMParticleData> data;
 
     generateBox(&data, 6, 1, true);
 
@@ -75,11 +76,11 @@ TEST_CASE( "Colour particle test", "[Neighbour grid]" ) {
 }
 
 TEST_CASE( "Generate iteration order list", "[Neighbour grid]" ) {
-    HiDEMParticleData data;
+    ParticleDataHandler<HiDEMParticleData> data;
 
 //    generateBox(&data, 6, 1, true);
-    ManVec<HiDEMTransportParticle> particles;
-    HiDEMTransportParticle p;
+    ManVec<ElementaryParticle> particles;
+    ElementaryParticle p;
     p.owner = 0;
     p.globalKey = 0;
     p.cord = {0,0,0};
@@ -94,7 +95,7 @@ TEST_CASE( "Generate iteration order list", "[Neighbour grid]" ) {
     p.cord = {1.1,0,0};
     particles.push_back(p);
 
-    data.appendTransportParticles(particles);
+    data.appendInitParticles(particles);
 
     NeighbourGrid grid;
     grid.generate(data, 1.0);
@@ -127,27 +128,37 @@ TEST_CASE( "Generate iteration order list", "[Neighbour grid]" ) {
 }
 
 TEST_CASE( "Generate empty iteration order list", "[Neighbour grid]" ) {
-    HiDEMParticleData data;
+    ParticleDataHandler<HiDEMParticleData> data;
 
     generateBox(&data, 3, 1);
 
     NeighbourGrid grid;
-    grid.generate(data, 0.5);
+    grid.generate(data, 0.2);
     grid.colourParticles(data);
     grid.generateIterationList(data);
 
     int neigbourCount = 0;
 
-    data.iterateAllParticles(SerialExec(), [&](size_t pInd, HiDEMParticleData &data) {
+    data.iterateAllParticles(SerialExec(), [&](size_t pInd, ParticleDataHandler<HiDEMParticleData> &data) {
         if (data.xCord[pInd] == 1 && data.yCord[pInd] == 1 && data.zCord[pInd] == 1) {
             //auto [xId, yId, zId] = grid.getGridId(data->xCord[pInd],data->xCord[pInd],data->xCord[pInd]);
-            int colour = grid.getPraticleColor(pInd);//getGridColor(xId, yId, zId);
+            int colour = grid.getParticleColor(pInd);//getGridColor(xId, yId, zId);
+
+
+
+
 
             grid.iteratePossibleNeighbours([&](size_t nInd) {
                 if (pInd == nInd)
                     return;
                 neigbourCount++;
+                std::cout << nInd << " ";
+                std::cout << data.xCord[nInd] << " ";
+                std::cout << data.yCord[nInd] << " ";
+                std::cout << data.zCord[nInd] << " ";
+                std::cout << neigbourCount << " " << std::endl;
             }, pInd, colour, true);
+
         }
     }, data);
     REQUIRE(neigbourCount == 0);
@@ -159,15 +170,15 @@ TEST_CASE( "Generate empty iteration order list", "[Neighbour grid]" ) {
 TEST_CASE( "Generate iteration order list offset cords", "[Neighbour grid]" ) {
     //
 
-    HiDEMParticleData data;
+    ParticleDataHandler<HiDEMParticleData> data;
 
     //generateBox(&data, 3, 1, true);
     int i = 0;
-    ManVec<HiDEMTransportParticle> particles;
+    ManVec<ElementaryParticle> particles;
     for (double x = 0; x < 3; x+=0.5) {
         for (double y = 0; y < 3; y+=0.5) {
             for (double z = 0.25; z < 5; z+=0.5) {
-                HiDEMTransportParticle p;
+                ElementaryParticle p;
                 p.owner = 0;
                 p.cord = {(double)x,(double)y,(double)z};
                 p.globalKey = i++;
@@ -176,7 +187,7 @@ TEST_CASE( "Generate iteration order list offset cords", "[Neighbour grid]" ) {
         }
     }
 
-    data.appendTransportParticles(particles);
+    data.appendInitParticles(particles);
 
     NeighbourGrid grid;
     grid.generate(data, 0.25);

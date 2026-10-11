@@ -27,8 +27,6 @@ class Hdf5Writer {
 
 public:
     Hdf5Writer() = default;
-    Hdf5Writer(bool compression, int compressionLevel) :  w(compression, compressionLevel)  {
-    }
 
     void createFile(std::string path) {
         w.createFile(path);

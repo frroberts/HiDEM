@@ -10,14 +10,14 @@
 #include <Geometry/Map2d.h>
 #include <Util/Real3.h>
 
-#include "../HiDEMLib/HiDEMTransportParticle.h"
+#include "ParticleDataHandler.h"
 #include "../HiDEMLib/HiDEMParticleData.h"
 
-void generateBox(HiDEMParticleData *data, int size, int haloLayer, bool shuffle = false);
+void generateBox(ParticleDataHandler<HiDEMParticleData> *data, int size, int haloLayer, bool shuffle = false);
 
 std::shared_ptr<Map2d<lpReal_t>>  generateGeometryPlane(Real3 low, Real3 high, double level);
 
-ManVec<HiDEMTransportParticle> make3Particles();
-ManVec<HiDEMTransportParticle> make4Particles();
+ManVec<ElementaryParticle> make3Particles();
+ManVec<ElementaryParticle> make4Particles();
 
 #endif //PHELL_TESTHELPERS_H

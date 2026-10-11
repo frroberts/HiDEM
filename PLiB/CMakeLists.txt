@@ -3,7 +3,7 @@ add_library(PLiB STATIC
         Domain.h
         Generators/FCCParticleGenerator.h
         Global.h
-        GlobalLocalMapper.h
+        OffloadHashMap.h
         LinkData.h
         Generators/LinkGenerator.h
         NeighbourGrid.cpp
@@ -46,7 +46,6 @@ add_library(PLiB STATIC
         Generators/BlockParticleGenerator.h
         Generators/ParticleGenerator.h
         Util/Unique.h
-        OutputWriters/VtkParticles.h
         Generators/ElementaryParticle.h
         Util/MPIHelpers.h
         Generators/ElementrayLink.h
@@ -60,6 +59,10 @@ add_library(PLiB STATIC
         Transport/CommunicatorPacked.h
         Util/GPUSelect.h
         Generators/FileParticleGenerator.h
+        Util/StackTrace.h
+        "LoggerV2/RangeDurationCollection.h"
+        LoggerV2/RecordedRange.h
+        H5IO/HDF5IO.cpp
 )
 
 if(ENABLE_OMP)
@@ -80,6 +83,7 @@ if (ENABLE_CUDA)
             Geometry/InputGeometry.cpp
             Geometry/CompoundInput.cpp
             LoggerV2/RangeCollection.cpp
+            H5IO/HDF5IO.cpp
 
             PROPERTIES LANGUAGE CUDA)
 

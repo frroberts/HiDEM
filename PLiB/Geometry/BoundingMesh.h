@@ -47,7 +47,6 @@ public:
                                                      dataPtr->getXVtxPtr(meshId),
                                                      dataPtr->getYVtxPtr(meshId),
                                                      dataPtr->getZVtxPtr(meshId));
-        // std::cout << tri << " " << dist << std::endl;
         if (tri >= 0) {
             fun(tri, dist);
         }

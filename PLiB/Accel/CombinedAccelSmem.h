@@ -12,12 +12,20 @@
 #include <Logger/Logger.h>
 #include <Transport/CommunicatorIndividual.h>
 
+#include "SmemEnumerator.h"
+
 #ifdef GPU
+
+#include "Tune.h"
 
 #include "DevPortabilityLayer.h"
 #include <Util/Unique.h>
 
 #if (ENABLE_CUDA==1)
+
+#include <cooperative_groups.h>
+#include <cuda/barrier>
+
 
 #include <cub/cub.cuh>
 
@@ -28,30 +36,22 @@ namespace cubX = cub;
 #include <hipcub/hipcub.hpp>
 namespace cubX = hipcub;
 #endif
-#endif
 
 __host__ __device__
-    int getIndexInBlock(int blockId, int threadId, int i, int indexBlocSize, int accelxGrid) {
-        //
-        int startOffset = indexBlocSize*blockId;
-        int inBlockOffset = (i*accelxGrid) + threadId;
-        return startOffset + inBlockOffset;
-    }
+    int getIndexInBlock(int blockId, int threadId, int i, int indexBlocSize) {
+    //
+    int startOffset = indexBlocSize*blockId;
+    int inBlockOffset = (i*CombinedSmemPairTune::X_DIMM_THREADS) + threadId;
+    return startOffset + inBlockOffset;
+}
+
+#endif
+
 
 class CombinedAccelSmem : public CombinedAccel {
 public:
 
-#if ENABLE_HIP
-    static constexpr int accelTotThreads = 512; // total threads in threadblock
-    static constexpr int accelxGrid = 128; // threads in x direction, rest will be filled with y, totThreads%accelxGrid == 0
-    static constexpr int numInCache = 620; // total number of particles in cache
-#else
-    static constexpr int accelTotThreads = 384; // total threads in threadblock
-    static constexpr int accelxGrid = 128; // threads in x direction, rest will be filled with y, totThreads%accelxGrid == 0
-    static constexpr int numInCache = 620; // total number of particles in cache
-#endif
-    static constexpr int indPerThread = (numInCache / accelxGrid) +
-                                        8; // size of index array per thread, numInCache/accelxGrid +1 for ciel, +1 for new indexes
+    static constexpr int numInCache = CombinedSmemPairTune::NUM_IN_CACHE_LARGE; // total number of particles in cache
     int indexBlockSize;
 public:
 
@@ -65,14 +65,27 @@ public:
     ManVec<pInd_t> iterationOrder;
 
     ManVec<int> blockIndexes;
+    ManVec<int> numNeighsPossiblyPruned;
 
-    ManVec<pInd_t> nonCachableIndesxes;
+    ManVec<pInd_t> nonCachableIndexes;
+    ManVec<pInd_t> largeCachableIndexes;
+    ManVec<pInd_t> cachableIndexes;
 
     ManVec<uint8_t> sideState;
 
+    // link smem accel stuff
+    ManVec<int> activeInBlockLink;
+    // ManVec<int> blockIndexes;
+    ManVec<int> cachingIndexesLink;
+    ManVec<int16_t> localPartIndACache;
+    ManVec<int16_t> localPartIndBCache;
+
+    int cacheCountLink = 768;
+
+    uint32_t linksPerBlock = 2048;
+    uint32_t numLinkBlocks;
+
     CombinedAccelSmem() {
-        Logger::writeAtFirst(fmt::format("cache space reserved combined {} B \n",
-                                         (3 * sizeof(hpReal_t) * numInCache) + (7 * sizeof(lpReal_t) * numInCache)));
     }
 
     template<class Policy, typename NFun, typename LFun, class FullArgs>
@@ -80,16 +93,26 @@ public:
                             NFun &nFunc, LFun lFunc, FullArgs args) {
 
 
-        if (nonCachableIndesxes.size() != 0) {
-            CombinedAccel::iterateCombined(policy, nonCachableIndesxes, pData, lData, nFunc, lFunc, args);
+        if (nonCachableIndexes.size() != 0) {
+            RangeV2 r("non cachable part force", 3);
+            CombinedAccel::iterateCombined(policy, nonCachableIndexes, pData, lData, nFunc, lFunc, args);
         }
+
+
+        if (largeCachableIndexes.size() != 0) {
+            RangeV2 r("double cachable part force", 3);
+            iterateCombined(policy, largeCachableIndexes, pData, lData, CombinedSmemPairTune::NUM_IN_CACHE_LARGE, nFunc, lFunc, args);
+        }
+
+        RangeV2 r("normal part force", 2);
+
 #ifdef ENABLE_ASYNC_COMM
 
-        iterateCombined(policy, preCommIndexes, pData, lData, nFunc, lFunc, args);
+        iterateCombined(policy, preCommIndexes, pData, lData, CombinedSmemPairTune::NUM_IN_CACHE, nFunc, lFunc, args);
 
 #warning "compiling async comm"
 #else
-        iterateCombined(policy, pData.ownedIndexes, pData, lData, nFunc, lFunc, args);
+        iterateCombined(policy, pData.ownedIndexes, pData, lData, CombinedSmemPairTune::NUM_IN_CACHE, nFunc, lFunc, args);
 #endif
     }
 
@@ -98,7 +121,7 @@ public:
                              NFun &nFunc, LFun lFunc, FullArgs args) {
 #ifdef ENABLE_ASYNC_COMM
 
-            iterateCombined(policy, postCommIndexes, pData, lData, nFunc, lFunc, args);
+            iterateCombined(policy, postCommIndexes, pData, lData, CombinedSmemPairTune::NUM_IN_CACHE, nFunc, lFunc, args);
 
 #endif
     }
@@ -108,7 +131,7 @@ public:
         xvtxRangePush("generatePrePostCommIndexes");
 #ifdef ENABLE_ASYNC_COMM
 
-        int lineLen = accelxGrid; // line length in particles
+        int lineLen = CombinedSmemPairTune::X_DIMM_THREADS; // line length in particles
 
         ManVec<bool,ScratchAllocator<bool>> outgoingFlags;
         outgoingFlags.resize(pData.numLocal, false);
@@ -173,7 +196,7 @@ public:
         auto secondPtr = preCommIndexes.data();
         int secondCount = preCommIndexes.size();
 
-        if (firstCount % accelxGrid != 0) {
+        if (firstCount % CombinedSmemPairTune::X_DIMM_THREADS != 0) {
             std::swap(firstPtr, secondPtr);
             std::swap(firstCount, secondCount);
         }
@@ -203,7 +226,6 @@ public:
     }
 
     void generateNeighbours(ParticleData &pData, LinkData &lData, double searchDistance, double interactDist) {
-        //
         {
             RangeV2 r("grid gen", 3);
             grid.generate(pData, searchDistance);
@@ -220,14 +242,117 @@ public:
         }
     }
 
-    void generateIndexes(ParticleData &pData, LinkData &lData, double searchDistance, double interactDist) {
+    void setupSideStates(LinkData &lData) {
+        // this sets up the side state values
+        // side state is used for optimization, so that the link state is replicated to each side of the link,
+        // allowing for optimal data layout when checking the state of a link.
+        sideState.resize( lData.numSideData);
+        auto statePtr = lData.state.data();
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i, CombinedAccelSmem &accel) {
+            pInd_t pInd = accel.iterationOrder[i];
+            accel.lAccel.iterateParticleLinksCT([&](auto lInd, auto sideInd, auto pIndOther) {
+                accel.sideState[sideInd] = statePtr[lInd];
+            }, pInd);
+        }, iterationOrder.size(), *this);
+        Iterator::syncAll();
+    }
+
+    void getNonCachableIndexes() {
+        nonCachableIndexes.clear();
+        nonCachableIndexes.resize(iterationOrder.size());
+        Iterator::copy(nonCachableIndexes.data(), iterationOrder.data(), nonCachableIndexes.size()*sizeof(pInd_t));
+        auto activeBlockPtr = activeInBlock.data();
+        auto endPos = stx::stable_partition(EXECPOLICY nonCachableIndexes.begin(), nonCachableIndexes.end(),
+            [=, this] DEVCALLABLE (pInd_t pInd) {
+            int blocInd = blockIndexes[pInd];// pInd/CombinedSmemPairTune::X_DIMM_THREADS;
+            if (activeBlockPtr[blocInd] < CombinedSmemPairTune::NUM_IN_CACHE_LARGE) {
+                return false;
+            }
+            return true;
+        });
+
+        largeCachableIndexes.clear();
+        largeCachableIndexes.resize(std::distance(endPos, nonCachableIndexes.end()));
+        Iterator::copy(largeCachableIndexes.data(), endPos, largeCachableIndexes.size()*sizeof(pInd_t));
+        auto endPosDouble = stx::stable_partition(EXECPOLICY largeCachableIndexes.begin(), largeCachableIndexes.end(),
+            [=, this] DEVCALLABLE (pInd_t pInd) {
+            int blocInd = blockIndexes[pInd];// pInd/CombinedSmemPairTune::X_DIMM_THREADS;
+            if (activeBlockPtr[blocInd] < CombinedSmemPairTune::NUM_IN_CACHE) {
+                return false;
+            }
+            return true;
+        });
+        largeCachableIndexes.resize(std::distance(largeCachableIndexes.begin(), endPosDouble));
+        nonCachableIndexes.resize(std::distance(nonCachableIndexes.begin(), endPos));
+
+    }
+
+    void generateLinkCacheIndexes(LinkData& lData) {
+        //xvtxRangePop();
+        // todo this has no check for going over the cache size
+        RangeV2 r("smem links gen", 3);
+
+        numLinkBlocks = 1+ (lData.ownedIndexes.size()/linksPerBlock);
+
+        activeInBlockLink.resize(numLinkBlocks);
+
+        cachingIndexesLink.resize(numLinkBlocks * cacheCountLink);
+        localPartIndACache.resize(lData.ownedIndexes.size());
+        localPartIndBCache.resize(lData.ownedIndexes.size());
+
+        getErrorDev((DevKernels2::iterateNonExitKern<<<numLinkBlocks, 256>>>(
+            [] __device__ (CombinedAccelSmem &accel, LinkData &lData) {
+            //
+            __shared__ SmemEnumerator<pInd_t, int16_t, 4096> enumerator;
+            enumerator.numMapped = 0;
+            enumerator.clear();
+            __syncthreads();
+            int g = blockIdx.x;
+            //             size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+            int tid = threadIdx.x;
+
+            for (int t = tid; t < accel.linksPerBlock; t = t + blockDim.x) {
+                int ind = t + (g * accel.linksPerBlock);
+                if (ind >= lData.ownedIndexes.size())
+                    continue;
+                pInd_t pIndA = lData.localPartIndA[ind];
+                pInd_t pIndB = lData.localPartIndB[ind];
+                enumerator.mapValue(pIndA);
+                enumerator.mapValue(pIndB);
+            }
+            __syncthreads();
+
+            for (int t = tid; t < accel.linksPerBlock; t = t + blockDim.x) {
+                int ind = t + (g * accel.linksPerBlock);
+                if (ind >= lData.ownedIndexes.size())
+                    continue;
+                pInd_t pIndA = lData.localPartIndA[ind];
+                pInd_t pIndB = lData.localPartIndB[ind];
+
+                accel.localPartIndACache[ind] = enumerator.getValue(pIndA);
+                accel.localPartIndBCache[ind] = enumerator.getValue(pIndB);
+            }
+            enumerator.storeCompressedKeys(&accel.cachingIndexesLink[(blockIdx.x * accel.cacheCountLink)]);
+            if (tid == 0)
+                accel.activeInBlockLink[g] = enumerator.numMapped;
+
+        }, *this, lData)));
+
+        Iterator::syncAll();
+    }
+
+
+    template <class PDataT>
+    void generateIndexes(PDataT &pData, LinkData &lData, double searchDistance, double interactDist) {
         //
         RangeV2 r5("accel generate", 2);
 
-        int blocks = 1 + (iterationOrder.size() / accelxGrid);
+
+
+        int blocks = 1 + (iterationOrder.size() / CombinedSmemPairTune::X_DIMM_THREADS);
 
         int maxNeighLinked = nList.maxNeighbours;// std::max(lData.allocatedMaxLinks, static_cast<int>(nList.maxNeighbours));
-        indexBlockSize = maxNeighLinked * accelxGrid;
+        indexBlockSize = maxNeighLinked * CombinedSmemPairTune::X_DIMM_THREADS;
 
         cachingIndexes.resize(blocks * numInCache, false);
         activeInBlock.resize(blocks, false);
@@ -237,6 +362,7 @@ public:
         linkCTInd.resize(blocks * indexBlockSize, false);
 
         selfPartIndInCache.resize(iterationOrder.size(), false);
+        numNeighsPossiblyPruned.resize(nList.numNeighs.size(), false);
 
         blockIndexes.resize(pData.numLocal, false);
         auto blockIndexPtr = blockIndexes.data();
@@ -248,305 +374,88 @@ public:
 
         auto range = xvtxRangeStart("accel");
 
-#ifdef GPU
-        // change indexes to AoSoA layout ?
-
         // GPU only
         auto start = std::chrono::steady_clock::now();
 
+        getErrorDev((DevKernels2::iterateNonExitKern<<<1 + (iterationOrder.size() / CombinedSmemPairTune::X_DIMM_THREADS), CombinedSmemPairTune::X_DIMM_THREADS>>>(
+            [] __device__ (NeighAccel &nList, LinkData &lData, CombinedAccelSmem &accel) {
+                int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-        DevKernels2::iterateNonExitKern<<<1 + (iterationOrder.size() / accelxGrid), accelxGrid>>>([]
-                __device__
-                (NeighbourGrid &grid, NeighAccel &nList, LinkData &lData, CombinedAccelSmem &accel) {
-            int idx = blockIdx.x * blockDim.x + threadIdx.x;
-            // fill indexes with int max
+                __shared__ SmemEnumerator<pInd_t, uint16_t, CombinedSmemPairTune::SHARED_ENUM_SET_SIZE> enumerator;
+                enumerator.numMapped = 0;
+                enumerator.clear();
 
-            __shared__
-            SharedUniq<CombinedAccelSmem::accelxGrid, CombinedAccelSmem::indPerThread, CombinedAccelSmem::numInCache> uniq;
-
-            __shared__ int numCurrentlyCached;
-            __shared__ int maxIterations;
-            int currentRow;
-            numCurrentlyCached = 0;
-            maxIterations = 0;
-            currentRow = 0;
-            // set all indexes in shared to int max
-            __shared__ pInd_t indexesShrd[CombinedAccelSmem::indPerThread * CombinedAccelSmem::accelxGrid];
-            for (int i = threadIdx.x;
-                 i < CombinedAccelSmem::indPerThread * CombinedAccelSmem::accelxGrid; i += blockDim.x) {
-                indexesShrd[i] = INT32_MAX;
-            }
-
-            __syncthreads();
-            // todo everyone can keep track of current row
-            // define add index lambda
-            // this work by adding by adding the current index to the next row
-            // then grab the unique vales from the entire column
-            auto addIndex = [&](pInd_t ind) {
-                indexesShrd[threadIdx.x + (currentRow * blockDim.x)] = ind;
-
-                currentRow++;
                 __syncthreads();
 
-                // make sure we are not over the current row
-                if (currentRow >= CombinedAccelSmem::indPerThread - 1) {
+                // iterate over particles, neighbours, and linked ones to create the set of indexes in the cache and enumerate them
+                // we do not need the extra threads of the last block in this section
+                if (idx < accel.iterationOrder.size()) {
 
-                    // if we are get uniques from cached indexes
-                    bool ret = true;
+                    pInd_t pInd = INT32_MAX;
+                    // add own index to cache
+                    pInd = accel.iterationOrder[idx];
+                    // add block index to blockIndexes
+                    accel.blockIndexes[pInd] = blockIdx.x;
+                    enumerator.mapValue(pInd);
 
-                    // get the unique vales in the shared cache
-                    ret = uniq.get(indexesShrd, numCurrentlyCached, accel.activeInBlock);
+                    int numNeighs = nList.numNeighs[pInd];
 
-                    currentRow = ceil((float) numCurrentlyCached / (float) CombinedAccelSmem::accelxGrid);
+                    for (int k = 0; k < numNeighs; ++k) {
+                        pInd_t pIndOther;
+                        pIndOther = nList.getPartNeighId(k, pInd);
+                        enumerator.mapValue(pIndOther);
+                    }
 
-                    return ret;
-                } else {
-                    // if not return true and continue
-                    return true;
-                }
-            };
+                    int particleLinkCount = accel.lAccel.linksPerParticle[pInd];
 
-            pInd_t pInd = INT32_MAX;
-            // add own index to cache
-            if (idx < accel.iterationOrder.size()) {
-                pInd = accel.iterationOrder[idx];
-                // add block index to blockIndexes
-                accel.blockIndexes[pInd] = blockIdx.x;
-            } else {
-                // dont add it ? or do we add the last value, no it will fail on single ranks
-            }
-            addIndex(pInd);
-
-            // get max neihgbours in block
-            int numNeighs = 0;
-            if (idx < accel.iterationOrder.size()) {
-                numNeighs = nList.numNeighs[pInd];
-            }
-            // all threads need to call addIndex the same number of time
-            // figure out who has the most
-            atomicMax(&maxIterations, numNeighs);
-            __syncthreads();
-
-            // for max neibhbours
-            for (int k = 0; k < maxIterations; ++k) {
-
-                //  if under current neighs add pIndOther, else add int32_max as a filler
-                pInd_t pIndOther = INT32_MAX;
-                if (k < numNeighs) {
-                    pIndOther = nList.getPartNeighId(k, pInd);
-                }
-                if (!addIndex(pIndOther))
-                    return;
-            }
-
-            // do the same for the linked particles
-            int particleLinkCount = 0;
-            if (idx < accel.iterationOrder.size()) {
-                particleLinkCount = accel.lAccel.linksPerParticle[pInd];
-            }
-            maxIterations = 0;
-            __syncthreads();
-
-            atomicMax(&maxIterations, particleLinkCount);
-            __syncthreads();
-
-            for (int k = 0; k < maxIterations; ++k) {
-                pInd_t pIndOther = INT32_MAX;
-                if (k < particleLinkCount) {
-                    lInd_t lInd = accel.lAccel.getPartLinkId(k, pInd);
-                    pIndOther = lData.localPartIndB[lInd];
-                    if (pIndOther == pInd) {
-                        pIndOther = lData.localPartIndA[lInd];
+                    for (int k = 0; k < particleLinkCount; ++k) {
+                        pInd_t pIndOther;
+                        lInd_t lInd = accel.lAccel.getPartLinkId(k, pInd);
+                        pIndOther = lData.localPartIndB[lInd];
+                        if (pIndOther == pInd) {
+                            pIndOther = lData.localPartIndA[lInd];
+                        }
+                        enumerator.mapValue(pIndOther);
                     }
                 }
-                if (!addIndex(pIndOther))
+
+                __syncthreads();
+                // todo for full reproducibility the cache indexes would need to be sorted and re-enumerated here
+
+                // here we need the last threads to ensure everything is written out
+                // thread 0 writes out how many we have cached
+                if (threadIdx.x == 0) {
+                    accel.activeInBlock[blockIdx.x] = enumerator.numMapped;
+                }
+                // write out how many are in the cache
+                if (enumerator.numMapped >= numInCache) {
+                    // if this block is over the space we have in the cache, exit here
                     return;
-            }
-
-            // last get unique
-            if (!uniq.get(indexesShrd, numCurrentlyCached, accel.activeInBlock))
-                return;
-
-            // dump out cache indexes
-            for (int i = threadIdx.x; i < numCurrentlyCached; i += blockDim.x) {
-                accel.cachingIndexes[(blockIdx.x * numInCache) + i] = indexesShrd[i];
-            }
-
-            // write out how many are in the cache
-            if (threadIdx.x == 0) {
-                accel.activeInBlock[blockIdx.x] = numCurrentlyCached;
-            }
-        }, grid, nList, lData, *this);
-
-        Iterator::syncAll();
-
-
-        // for each block, build the iteration table with cache indexes
-        auto end = std::chrono::steady_clock::now();
-        std::chrono::duration<double> elapsed_seconds = end - start;
-        //std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
-
-        start = std::chrono::steady_clock::now();
-
-        // generate the cache indexes for the neighbours and links
-        // that is, at what index in the cache is the local index found at
-        Iterator::iterateBlocked(OffloadExec(), [=] __device__(int b, int i, CombinedAccelSmem &accel,
-                                                               ParticleData &pData, LinkData &lData,
-                                                               NeighAccel &nList) {
-            pInd_t ind = ((b * accelxGrid) + i);
-
-            if (ind >= accel.iterationOrder.size())
-                return;
-            pInd_t pInd = accel.iterationOrder[ind];
-
-            // uncachable block
-            int activeInBlock = accel.activeInBlock[b];
-            if (activeInBlock == -1) {
-                return;
-            }
-
-            // this is a binary search
-            auto getCachedIndex = [&](pInd_t pInd) {
-                int loc;
-                int left = 0;
-                int right = activeInBlock - 1;
-                while (left <= right) {
-                    loc = (left + right) / 2;
-                    auto val = accel.cachingIndexes[(b * numInCache) + loc];
-                    if (val == pInd) {
-                        return loc;
-                    } else if (val < pInd)
-                        left = loc + 1;
-                    else
-                        right = loc - 1;
-                }
-                return -1;
-            };
-            accel.selfPartIndInCache[ind] = getCachedIndex(pInd);
-
-            for (size_t k = 0; k < nList.numNeighs[pInd]; k++) {
-                pInd_t pIndOther = nList.getPartNeighId(k, pInd);
-                accel.neighPartIndInCache[getIndexInBlock(b, threadIdx.x, k, accel.indexBlockSize, accel.accelxGrid)] = getCachedIndex(pIndOther);
-            }
-
-            int particleLinkCount = accel.lAccel.linksPerParticle[pInd];
-            for (size_t k = 0; k < particleLinkCount; k++) {
-                //
-                lInd_t lInd = accel.lAccel.getPartLinkId(k, pInd);
-
-                pInd_t pIndOther = lData.localPartIndB[lInd];
-                lInd_t ctInd;
-
-                if (pIndOther == pInd) {
-                    pIndOther = lData.localPartIndA[lInd];
-                    ctInd = lData.sideIndEndB[lInd];
-                } else {
-                    ctInd = lData.sideIndEndA[lInd];
-                }
-                accel.linkCTInd[getIndexInBlock(b, threadIdx.x, k, accel.indexBlockSize,accel.accelxGrid)] = ctInd;
-                accel.linkedPartIndInCache[getIndexInBlock(b, threadIdx.x, k, accel.indexBlockSize,accel.accelxGrid)] = getCachedIndex(pIndOther);
-            }
-
-        }, (size_t) accelxGrid, iterationOrder.size(), *this, pData, lData, nList);
-        Iterator::syncAll();
-
-        end = std::chrono::steady_clock::now();
-        elapsed_seconds = end - start;
-#else
-        // not quite 100% working ?
-        int numBlocks = 1 + (iterationOrder.size() / accelxGrid);
-        for (int b = 0; b < numBlocks;b++) {
-            std::unordered_map<int, int> cacheHits;
-            //
-            auto addIndex = [&](pInd_t pInd){
-                if(cacheHits.find(pInd) == cacheHits.end()){
-                    cacheHits[pInd] = 0;
-                }
-                cacheHits[pInd]++;
-            };
-
-            for (int i = 0; i < accelxGrid; ++i) {
-                int idx = b * accelxGrid + i;
-                //
-                pInd_t pInd = INT32_MAX;
-                // add own index to cache
-                if (idx < iterationOrder.size()) {
-                    pInd = iterationOrder[idx];
-                    // add block index to blockIndexes
-                    blockIndexes[pInd] = b;
-                } else {
-                    // dont add it ? or do we add the last value, no it will fail on single ranks
-                    continue;
                 }
 
-                addIndex(pInd);
+                enumerator.storeCompressedKeys(&accel.cachingIndexes[(blockIdx.x * numInCache)]);
 
-                nList.iteratePossibleNeighbours([&](pInd_t pIndOther) {
-                    addIndex(pIndOther);
-                }, pInd, pData);
+                // if the thread is outside of the active particles return here,
+                // after this we do not need the extra threads so we can exit them
+                if (idx >= accel.iterationOrder.size())
+                    return;
 
-                for (int k = 0; k < nList.numNeighs[pInd]; ++k) {
-                    pInd_t pIndOther = INT32_MAX;
-                    lInd_t lInd = lData.getPartLinkId(k, pInd);
-                    pIndOther = lData.localPartIndB[lInd];
-                    if (pIndOther == pInd) {
-                        pIndOther = lData.localPartIndA[lInd];
-                    }
-                    addIndex(pIndOther);
+                pInd_t pInd = accel.iterationOrder[idx];
 
-                }
-                lAccel.iterateParticleLinksCT([&](lInd_t lInd, lInd_t ctInd, pInd_t pIndOther){
-                    addIndex(pIndOther);
-                }, pInd);
+                pInd_t ind = ((blockIdx.x * CombinedSmemPairTune::X_DIMM_THREADS) + threadIdx.x);
 
-            }
+                accel.selfPartIndInCache[ind] = enumerator.getValue(pInd);
 
-            std::vector<int> cacheIds;
-            for (auto p: cacheHits) {
-                cacheIds.push_back(p.first);
-            }
-    /*
-            std::sort(cacheIds.begin(), cacheIds.end(), [](auto a, auto b){
-                return a.second < b.second;
-            });
-    */
-
-            for(int i = 0; i < cacheIds.size(); i++){
-                cachingIndexes[(b * numInCache) + i] = cacheIds[i];
-            }
-            // write out how many are in the cache
-            activeInBlock[b] = (int) cacheIds.size();
-
-            for (int i = 0; i < accelxGrid; ++i) {
-                int ind = b * accelxGrid + i;
-                //
-                pInd_t pInd = INT32_MAX;
-                // add own index to cache
-                if (ind < iterationOrder.size()) {
-                    pInd = iterationOrder[ind];
-                    // add block index to blockIndexes
-                    blockIndexes[pInd] = b;
-                } else {
-                    // dont add it ? or do we add the last value, no it will fail on single ranks
-                    continue;
-                }
-                selfPartIndInCache[ind] = std::distance(cacheIds.begin(),
-                                                        std::find(cacheIds.begin(), cacheIds.end(), pInd));
-
-                for (size_t k = 0; k < nList.numNeighs[pInd]; k++) {
+                int particleNeighCount = nList.numNeighs[pInd];
+                for (size_t k = 0; k < particleNeighCount; k++) {
                     pInd_t pIndOther = nList.getPartNeighId(k, pInd);
-
-                    neighPartIndInCache[ind + (k * iterationOrder.size())] =
-                             std::distance(cacheIds.begin(),
-                                                        std::find(cacheIds.begin(), cacheIds.end(), pIndOther)); // figure out what the real index here is actually
+                    accel.neighPartIndInCache[getIndexInBlock(blockIdx.x, threadIdx.x, k, accel.indexBlockSize)] = enumerator.getValue(pIndOther);
                 }
-                int particleLinkCount = lData.linksPerParticle[pInd];
 
-
-
+                int particleLinkCount = accel.lAccel.linksPerParticle[pInd];
                 for (size_t k = 0; k < particleLinkCount; k++) {
                     //
-                    lInd_t lInd = lData.getPartLinkId(k, pInd);
+                    lInd_t lInd = accel.lAccel.getPartLinkId(k, pInd);
 
                     pInd_t pIndOther = lData.localPartIndB[lInd];
                     lInd_t ctInd;
@@ -557,70 +466,75 @@ public:
                     } else {
                         ctInd = lData.sideIndEndA[lInd];
                     }
-
-                    linkCTInd[ind + (k * iterationOrder.size())] = ctInd; // should be pind right ? no should be ind
-                    linkedPartIndInCache[ind + (k * iterationOrder.size())] =
-                            std::distance(cacheIds.begin(),std::find(cacheIds.begin(), cacheIds.end(), pIndOther));;
+                    accel.linkCTInd[getIndexInBlock(blockIdx.x, threadIdx.x, k, accel.indexBlockSize)] = ctInd;
+                    accel.linkedPartIndInCache[getIndexInBlock(blockIdx.x, threadIdx.x, k, accel.indexBlockSize)] = enumerator.getValue(pIndOther);
                 }
-            }
-        }
-#endif
+
+                if constexpr (CombinedSmemPairTune::FUSED_NEIGH) {
+                    // if we run fused neighbors, remove the linked particles from the neighbor list
+                    for (size_t nn = 0; nn < particleNeighCount; nn++) {
+                        pInd_t pIndOther = accel.neighPartIndInCache[getIndexInBlock(blockIdx.x, threadIdx.x, nn, accel.indexBlockSize)];
+                        bool found = false;
+                        for (size_t nl = 0; nl < particleLinkCount; nl++) {
+                            pInd_t pIndLinked = accel.linkedPartIndInCache[getIndexInBlock(blockIdx.x, threadIdx.x, nl, accel.indexBlockSize)];
+                            if (pIndLinked == pIndOther) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found) {
+                            accel.neighPartIndInCache[getIndexInBlock(blockIdx.x, threadIdx.x, nn, accel.indexBlockSize)] = -1;
+                        }
+                    }
+
+                    pInd_t write = 0;
+                    for (pInd_t read = 0; read < particleNeighCount; ++read) {
+                        if (accel.neighPartIndInCache[getIndexInBlock(blockIdx.x, threadIdx.x, read, accel.indexBlockSize)] != -1) {
+                            accel.neighPartIndInCache[getIndexInBlock(blockIdx.x, threadIdx.x, write, accel.indexBlockSize)] =
+                                    accel.neighPartIndInCache[getIndexInBlock(blockIdx.x, threadIdx.x, read, accel.indexBlockSize)];
+                            ++write;
+                        }
+                    }
+                    accel.numNeighsPossiblyPruned[pInd] = write;
+                } else {
+                    accel.numNeighsPossiblyPruned[pInd] = nList.numNeighs[pInd];
+                }
+            }, nList, lData, *this)));
+        Iterator::syncAll();
 
         int min = 100000;
         int max = 0;
-        //std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
         ParallelReduce<int>::minMax(min, max, activeInBlock);
-
-        int uncachable = ParallelReduce<int>::transformReduce(activeInBlock.begin(), activeInBlock.end(), 0, std::plus<int>(),
-                                             []DEVCALLABLE(int blkAktive) {
-                                                 if (blkAktive == -1) return 1;
-                                                 return 0;
-                                             });
 
         xvtxRangeEnd(range);
 
-        // run select from iteration order here for non cachable ?
-        nonCachableIndesxes.clear();
-        for (int i = 0; i < blocks; i++) {
-            if (activeInBlock[i] == -1) {
-                for (int j = 0; j < accelxGrid; j++) {
-                    //
-                    int targetInd = (i * accelxGrid) + j;
-                    // size of the iteration otder here ?
-                    if (targetInd < iterationOrder.size())
-                        nonCachableIndesxes.push_back(iterationOrder[targetInd]);
-                }
-            }
-        }
+        getNonCachableIndexes();
 
-        sideState.resize(linkCTInd.size());
-        auto statePtr = lData.state.data();
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i, CombinedAccelSmem &accel) {
-            pInd_t pInd = accel.iterationOrder[i];
-            accel.lAccel.iterateParticleLinksCT([&](auto lInd, auto sideInd, auto pIndOther) {
-                accel.sideState[sideInd] = statePtr[lInd];
-            }, pInd);
-        }, iterationOrder.size(), *this);
-        Iterator::syncAll();
-
-
+        setupSideStates(lData);
 
         Logger::writeAtFirst(fmt::format(
-            "Cache stats, max space {}, world stats: max used {}, min used {}, max uncachable {} \n",
-            numInCache, Logger::getMaxValWorld(max), Logger::getMaxValWorld(min), uncachable));
+            "Cache stats, normal space {}, large space {}, world stats: max used {}, min used {}, max uncachable {}, max large cachable {} \n",
+            CombinedSmemPairTune::NUM_IN_CACHE, CombinedSmemPairTune::NUM_IN_CACHE_LARGE,
+            Logger::getMaxValWorld(max), Logger::getMaxValWorld(min),
+            Logger::getMaxValWorld(nonCachableIndexes.size()), Logger::getMaxValWorld(largeCachableIndexes.size())));
 
-        //Logger::writeAtFirst(fmt::format("Max cached combined {} out of {} \n", Logger::getStats(max, ""), numInCache));
-        //Logger::writeAtFirst(fmt::format("Number of uncachable blocks {} \n", Logger::getStats(uncachable, "")));
-        //Logger::writeAtFirst(fmt::format("Number of cachable blocks {} \n", Logger::getStats(blocks - uncachable, "")));
-
-
-        //xvtxRangePop();
+#ifndef SMEM_LINKS
+        generateLinkCacheIndexes(lData);
+#endif
     }
 
     template<class Policy, typename NFun, typename LFun, class FullArgs>
-    void iterateCombined(Policy policy, ManVec<pInd_t> &indexes, ParticleData &pData, LinkData &lData,
+    void iterateCombined(Policy policy, ManVec<pInd_t> &indexes, ParticleData &pData, LinkData &lData, int cacheSizeLimit,
                          NFun &nFunc, LFun lFunc, FullArgs args);
 
+#ifdef SMEM_LINKS
+
+    template<class Policy, typename LFun, class FullArgs>
+    void iterateLinks(Policy policy, ParticleData &pData, LinkData &lData,
+                  LFun &lFunc, FullArgs args);
+
+#else
+    // keep this disabled
     template<class Policy, typename LFun, class FullArgs>
     void iterateLinks(Policy policy, ParticleData &pData, LinkData &lData,
                       LFun &lFunc, FullArgs args) {
@@ -661,8 +575,9 @@ public:
         }, lData, lAccel, *this);
 
     }
+#endif
 
-        template<class Policy, class LData, typename LFun, class FullArgs>
+    template<class Policy, class LData, typename LFun, class FullArgs>
     void iterateLinksRegen(Policy policy, ParticleData &pData, LData &lData,
                          LFun &lFunc, FullArgs args) {
         //
@@ -730,75 +645,127 @@ public:
 
 #ifdef GPU
 
-union dbl {
-    double d;
-    uint32_t parts[2];
-};
-
-/*
-__device__
-inline void storeShared(int ind, double val, double *ptr, int offset) {
-    dbl storeVal;
-    storeVal.d = val;
-    uint32_t *ptr4 = reinterpret_cast<uint32_t *>(ptr);
-
-    ptr4[ind] = storeVal.parts[0];
-    ptr4[ind + offset] = storeVal.parts[1];
-
+#if (ENABLE_CUDA==1)
+template <std::size_t... ints, class... Args, class BarrierT>
+DEVCALLABLE void
+cudaLoadToSharedTupleImpl(size_t indIn, size_t indOut,
+                          const std::tuple<Args *...> &ptrsIn,
+                          const std::tuple<Args *...> &ptrsOut,
+                          std::integer_sequence<std::size_t, ints...>, BarrierT &barrier) {
+  (cuda::memcpy_async(&std::get<ints>(ptrsOut)[indOut], &std::get<ints>(ptrsIn)[indIn],
+                     cuda::aligned_size_t<sizeof(Args)>(sizeof(Args)), barrier), ...);
 }
 
-__device__
-inline double loadShared(int ind, double *ptr, int offset) {
-    dbl val;
-    uint32_t *ptr4 = reinterpret_cast<uint32_t *>(ptr);
-
-    val.parts[0] = ptr4[ind];
-    val.parts[1] = ptr4[ind + offset];
-
-    return val.d;
-
+template <class... Args, class BarrierT>
+DEVCALLABLE void cudaLoadToSharedTuple(size_t indIn, size_t indOut,
+                                       const std::tuple<Args *...> &ptrsIn,
+                                       const std::tuple<Args *...> &ptrsOut, BarrierT &barrier) {
+    cudaLoadToSharedTupleImpl(indIn, indOut, ptrsIn, ptrsOut, std::make_index_sequence<sizeof...(Args)>(), barrier);
 }
-*/
+#endif
 
-__device__
-inline void storeShared(int ind, double val, double *ptr, int offset) {
-    //
-    ptr[ind] = val;
+
+template<typename LFun, class FullArgs>
+__global__
+void
+pairIteratorLinksCache(lInd_t *indexes, int numIndexes,
+                          LFun lFunc,
+                          int *activeInBlockPtr,
+                          // int *blockIndexesPtr,
+                          lInd_t *cachingIndexesPtr,
+                          const int16_t *localPartIndACachePtr,const int16_t *localPartIndBCachePtr,
+                          const lInd_t *sideIndEndAPtr, const lInd_t *sideIndEndBPtr, uint8_t *statePtr,
+                          uint8_t *sideStatePtr,
+                          int cacheCount,
+                          int linksPerBlock,
+                          const FullArgs args)
+{
+    // todo this has no way of handling the blocks with more links than the cache size
+
+    auto pack = args.split();
+
+    auto partArgs = std::get<0>(pack);
+    auto linkSideArgs = std::get<1>(pack);
+    auto linkArgs = std::get<2>(pack);
+
+    extern __shared__ uint8_t baseShardPtr[];
+    int shrdOffset = 0;
+    const auto partArgsShrdPtr = makeSharedPtrs(&baseShardPtr[shrdOffset], cacheCount, partArgs);
+
+
+    int activeInBlock = activeInBlockPtr[blockIdx.x];
+    if (activeInBlock == -1) {
+        return;
+        // handled by other kernel todo implement other kernel
+    } else {
+
+        for (int i = threadIdx.x; i < activeInBlock; i += (blockDim.x)) {
+            lInd_t readInd = cachingIndexesPtr[(blockIdx.x * cacheCount) + i];
+            setAtIndTuple(i, partArgsShrdPtr, getAtIndTupleLdg(readInd, partArgs));
+        }
+
+        __syncthreads();
+
+
+
+        for (int i = threadIdx.x; i < linksPerBlock; i += blockDim.x)
+        {
+            int idx = (blockIdx.x * linksPerBlock) + i;
+            if (idx >= numIndexes) return;
+
+            lInd_t lInd;
+            lInd = idx;// indexes[idx]; // needs to read the index if it should replace iterate owned links
+
+            auto pIndACache = localPartIndACachePtr[lInd];
+            auto pIndBCache = localPartIndBCachePtr[lInd];
+
+
+            auto sideA = getAtIndTuple(sideIndEndAPtr[lInd], linkSideArgs);
+            auto sideB = getAtIndTuple(sideIndEndBPtr[lInd], linkSideArgs);
+
+            auto partA = getAtIndTuple(pIndACache, partArgsShrdPtr);
+            auto partB = getAtIndTuple(pIndBCache, partArgsShrdPtr);
+
+            uint8_t initialState = statePtr[lInd];
+
+            auto all = std::tuple_cat(partA, partB, sideA, sideB);
+
+            auto linkVals = getAtIndTuple(lInd, linkArgs);
+
+            callFun2(lFunc, all, linkVals);
+
+            setAtIndTuple(lInd, linkArgs, linkVals);
+
+            uint8_t updatedState = statePtr[lInd];
+            if (updatedState != initialState && updatedState == 0) {
+                // break link in accel ?
+                // get an idea of what the performance impact of this is
+                sideStatePtr[sideIndEndBPtr[lInd]] = 0;
+                sideStatePtr[sideIndEndAPtr[lInd]] = 0;
+
+            }
+        }
+    }
 }
 
-__device__
-inline double loadShared(int ind, double *ptr, int offset) {
-
-    return ptr[ind];
-}
-
-__device__
-inline void storeShared(int ind, float val, float *ptr, int offset) {
-    //
-    ptr[ind] = val;
-}
-
-__device__
-inline float loadShared(int ind, float *ptr, int offset) {
-
-    return ptr[ind];
-}
 
 template<typename NFun, typename LFun, class FullArgs>
 __global__
 void
+__launch_bounds__(CombinedSmemPairTune::THREADS_PER_BLOCK, CombinedSmemPairTune::BLOCKS_PER_SM)
 pairIteratorCombinedCache(pInd_t *indexes,
-                          CombinedAccelSmem &accel, NFun nFunc,
+                            NFun nFunc,
                           LFun lFunc, pInd_t *activeInBlockPtr, pInd_t *blockIndexesPtr, pInd_t *cachingIndexesPtr,
                           lInd_t *linkCTIndPtr,
                           int16_t *linkedPartIndInCachePtr, int *linksPerParticlePtr,
                           int16_t *neighPartIndInCachePtr,
-                          int *numNeighsPtr,
-                          int16_t *selfPartIndInCachePtr, uint8_t *statePtr,
-                          uint8_t *sideStatePtr,
+                          const int *numNeighsPtr,
+                          const int16_t *selfPartIndInCachePtr, const uint8_t *statePtr,
+                          const uint8_t *sideStatePtr,
                           hpReal_t *xCordPtr, hpReal_t *yCordPtr, hpReal_t *zCordPtr,
-                          size_t numIndexes,
-                          int indexBlockSize, const FullArgs args) {
+                          pInd_t *particleLinkIdPtr, const int numPraticlesAllocatedLink,
+                          const size_t numIndexes,
+                          const int indexBlockSize, const int linkSideBlockCount, int elementsInCache, const FullArgs args) {
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int tid = (blockDim.x * threadIdx.y) + threadIdx.x;
@@ -815,21 +782,31 @@ pairIteratorCombinedCache(pInd_t *indexes,
     // accel.blockIndexes[idx]
 
     extern __shared__ uint8_t baseShardPtr[];
+
+
     int shrdOffset = 0;
+/*
+    auto block = cooperative_groups::this_thread_block();
+    auto thread = cooperative_groups::this_thread();
+    using barrier_t = cuda::barrier<cuda::thread_scope_block>;
 
+    __shared__ barrier_t barrier;
+    shrdOffset += sizeof(barrier_t);
+    if (block.thread_rank() == 0) {
+        init(&barrier, block.size());
+    }
+    __syncthreads();
+*/
     const auto cordArgs = std::make_tuple(xCordPtr, yCordPtr, zCordPtr);
-    const auto cordArgShrdPtr = makeSharedPtrs(&baseShardPtr[shrdOffset], CombinedAccelSmem::numInCache, cordArgs);
+    const auto cordArgShrdPtr = makeSharedPtrs(&baseShardPtr[shrdOffset], elementsInCache, cordArgs);
 
-    shrdOffset += CombinedAccelSmem::numInCache * 3 * sizeof(hpReal_t );
-    const auto neighArgsShrdPtr = makeSharedPtrs(&baseShardPtr[shrdOffset], CombinedAccelSmem::numInCache, neighArgs);
-
-
-    int nidx = threadIdx.x;
-
-    //int iteratedLinks = 0;
-    //int iteratedNeighs = 0;
+    shrdOffset += elementsInCache * 3 * sizeof(hpReal_t );
+    const auto neighArgsShrdPtr = makeSharedPtrs(&baseShardPtr[shrdOffset], elementsInCache, neighArgs);
 
     auto force = zeroTuple(forceArgs);
+
+    auto allCachable = std::tuple_cat(cordArgs, neighArgs);
+    auto allSharedPtr = std::tuple_cat(cordArgShrdPtr, neighArgsShrdPtr);
 
     pInd_t pInd;
     ind_t idxCache;
@@ -842,16 +819,23 @@ pairIteratorCombinedCache(pInd_t *indexes,
     idxCache = cacheBlockIdx * blockDim.x + threadIdx.x;
 
     int activeInBlock = activeInBlockPtr[cacheBlockIdx];
-    if (activeInBlock == -1) {
+    if (activeInBlock >= elementsInCache) {
         return;
         // handled by other kernel
     } else {
+
         for (int i = tid; i < activeInBlock; i += (blockDim.x * blockDim.y)) {
             //
             pid_t readInd = cachingIndexesPtr[(cacheBlockIdx * CombinedAccelSmem::numInCache) + i];
-            setAtIndTuple(i, cordArgShrdPtr, getAtIndTuple(readInd, cordArgs));
-            setAtIndTuple(i, neighArgsShrdPtr, getAtIndTuple(readInd, neighArgs));
+
+            // cudaLoadToSharedTuple(readInd, i, cordArgs, cordArgShrdPtr, barrier);
+            // cudaLoadToSharedTuple(readInd, i, neighArgs, neighArgsShrdPtr, barrier);
+
+            setAtIndTuple(i, allSharedPtr, getAtIndTupleLdg(readInd, allCachable));
         }
+
+        // Wait for all copies to complete.
+        // barrier.arrive_and_wait();
 
         __syncthreads();
         if (idx >= numIndexes) return;
@@ -864,9 +848,8 @@ pairIteratorCombinedCache(pInd_t *indexes,
         int numNeighs = numNeighsPtr[pInd];
         int particleLinkCount = linksPerParticlePtr[pInd];
 
-#pragma unroll 3
         for (size_t i = threadIdx.y; i < numNeighs; i = i + blockDim.y) {
-            pInd_t pIndOther = neighPartIndInCachePtr[getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize, blockDim.x)];
+            pInd_t pIndOther = neighPartIndInCachePtr[getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize)];
             auto cordOther = getAtIndTuple(pIndOther, cordArgShrdPtr);
             auto neigh = getAtIndTuple(pIndOther, neighArgsShrdPtr);
 
@@ -879,64 +862,66 @@ pairIteratorCombinedCache(pInd_t *indexes,
             auto all = std::tuple_cat(self, neigh);
             auto diff = std::make_tuple(mask, xDist, yDist, zDist);
             callFun3(nFunc, diff, all, force);
-
-            //iteratedNeighs++;
         }
 
-#pragma unroll 3
         for (int i = threadIdx.y; i < particleLinkCount; i = i + blockDim.y) {
-            pInd_t pIndOther = linkedPartIndInCachePtr[getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize, blockDim.x)];
-            lInd_t ctInd = linkCTIndPtr[getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize, blockDim.x)];
-            lInd_t lInd = accel.lAccel.getPartLinkId(i, pInd);
+            pInd_t pIndOther = linkedPartIndInCachePtr[getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize)];
+            // this does not work, or well it works on one rank but not multi rank
+            //lInd_t linkSideInd = getIndexInBlock(cacheBlockIdx, threadIdx.x, i, linkSideBlockCount);
+
+            lInd_t linkSideInd = linkCTIndPtr[getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize)];
+
+            lInd_t lInd = particleLinkIdPtr[pInd + (i * numPraticlesAllocatedLink)];//accel.lAccel.getPartLinkId(i, pInd);
 
             auto cordOther = getAtIndTuple(pIndOther, cordArgShrdPtr);
             auto neigh = getAtIndTuple(pIndOther, neighArgsShrdPtr);
-            auto ct = getAtIndTuple(ctInd, linkSideArgs);
-            auto link = getAtIndTuple(lInd, linkArgs);
 
-            lpReal_t mask = 1;
-            // uint8_t state = statePtr[lInd];
-            uint8_t state = sideStatePtr[ctInd];
-            if (state == 0) { mask = 0; } // can i get rid of this read
+            auto ct = getAtIndTupleFlagged(linkSideInd, linkSideArgs);
+            auto link = getAtIndTuple(lInd, linkArgs);
 
             lpReal_t xDist = std::get<0>(cord) - std::get<0>(cordOther);//xCord - xCordOth;
             lpReal_t yDist = std::get<1>(cord) - std::get<1>(cordOther);//yCord - yCordOth;
             lpReal_t zDist = std::get<2>(cord) - std::get<2>(cordOther);//zCord - zCordOth;
 
-            auto all = std::tuple_cat(self, neigh, link);
+            lpReal_t mask = 1;
             auto diff = std::make_tuple(mask, xDist, yDist, zDist);
-            callFun4(lFunc, diff, all, ct, force);
 
-            setAtIndTuple(ctInd, linkSideArgs, ct);
+            if constexpr (CombinedSmemPairTune::FUSED_NEIGH) {
+                auto allNeigh = std::tuple_cat(self, neigh);
+                callFun3(nFunc, diff, allNeigh, force);
+
+            }
+
+            // uint8_t state = statePtr[lInd];
+            uint8_t state = sideStatePtr[linkSideInd];
+            if (state == 0) { mask = 0; }
+            diff = std::make_tuple(mask, xDist, yDist, zDist);
+            auto allLink = std::tuple_cat(self, neigh, link);
+            callFun4(lFunc, diff, allLink, ct, force);
+
+            setAtIndTupleFlagged(linkSideInd, linkSideArgs, ct);
         }
     }
-    __syncthreads();
-
-    // todo remove 2 int offset here
-    auto forceShrd = makeSharedPtrs(&baseShardPtr[sizeof(int)*2*CombinedAccelSmem::accelxGrid],
-                                    CombinedAccelSmem::accelxGrid, forceArgs);
-
-    if (threadIdx.y == 0) {
-        setAtIndTuple(nidx, forceShrd, zeroTuple(forceShrd));
-    }
-
-    __syncthreads();
-
-    // one y block at a time, write out the values to shared
-    for (int i = 0; i < blockDim.y; ++i) {
-        if (i == threadIdx.y) {
-            addAtIndTuple(nidx, forceShrd, force);
-        }
+    if constexpr (CombinedSmemPairTune::THREADS_PER_BLOCK != CombinedSmemPairTune::X_DIMM_THREADS) {
+        // gather from different Y blocks if there are any
         __syncthreads();
-    }
 
-    __syncthreads();
-    // dump shared to vram
-    if (threadIdx.y == 0) {
-        if (idx >= numIndexes) return;
-        pInd_t pInd = indexes[idx];
+        auto forceShrd = makeSharedPtrs(&baseShardPtr[0],
+                                        CombinedSmemPairTune::THREADS_PER_BLOCK, forceArgs);
 
-        setAtIndTuple(pInd, forceArgs, getAtIndTuple(nidx, forceShrd));
+        setAtIndTuple(threadIdx.x + (blockDim.x * threadIdx.y), forceShrd, force);
+        __syncthreads();
+
+        if (threadIdx.y == 0) {
+            auto forceOut = force;
+            for (int i = 1; i < blockDim.y; i++) {
+                auto forceOther = getAtIndTuple(threadIdx.x + (blockDim.x * i), forceShrd);
+                addTuple(forceOut, forceOther);
+            }
+            setAtIndTuple(pInd, forceArgs, forceOut);
+        }
+    } else {
+        setAtIndTuple(pInd, forceArgs, force);
     }
 }
 
@@ -945,14 +930,13 @@ pairIteratorCombinedCache(pInd_t *indexes,
 
 template<class Policy, typename NFun, typename LFun, class FullArgs>
 void CombinedAccelSmem::iterateCombined(Policy policy, ManVec<pInd_t> &indexes, ParticleData &pData,
-                                             LinkData &lData,
+                                             LinkData &lData, int cacheSizeLimit,
                                              NFun &nFunc, LFun lFunc, FullArgs args) {
 #ifdef GPU
-    RangeV2("Neigh force", 2);
     //
-    uint32_t blockSizeX = CombinedAccelSmem::accelxGrid;
-    uint32_t blockSizeY = CombinedAccelSmem::accelTotThreads / CombinedAccelSmem::accelxGrid;
-    uint32_t grd = 1 + (indexes.size() / CombinedAccelSmem::accelxGrid);
+    uint32_t blockSizeX = CombinedSmemPairTune::X_DIMM_THREADS;
+    uint32_t blockSizeY = CombinedSmemPairTune::THREADS_PER_BLOCK / CombinedSmemPairTune::X_DIMM_THREADS;
+    uint32_t grd = 1 + (indexes.size() / CombinedSmemPairTune::X_DIMM_THREADS);
 
     dim3 threads{blockSizeX, blockSizeY, 1};
 
@@ -963,15 +947,23 @@ void CombinedAccelSmem::iterateCombined(Policy policy, ManVec<pInd_t> &indexes, 
 
     sharedSize += std::tuple_size<decltype(neighArgs)>{}* sizeof(lpReal_t); // whatever the neigh part of the pack is
 
-    sharedSize *= numInCache;
+    sharedSize *= cacheSizeLimit;
 
     // std::cout << "shared size " << sharedSize << std::endl;
+#if (ENABLE_CUDA==1)
+    if(sharedSize > 48000) {
+        // really 48k
+        getErrorDev((cudaFuncSetAttribute(
+            pairIteratorCombinedCache<NFun, LFun, FullArgs>,cudaFuncAttributeMaxDynamicSharedMemorySize,sharedSize
+        )));
+    }
 
-
+#endif
     // getErrorDevApi(cudaFuncSetAttribute(pairIteratorCombinedCache<NFun, LFun, FullArgs>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared));
     if (indexes.size() != 0)
+
         getErrorDev(((pairIteratorCombinedCache<<<grd, threads, sharedSize>>>(indexes.data(),
-                *this, nFunc, lFunc,
+                nFunc, lFunc,
 
                 activeInBlock.data(),
                 blockIndexes.data(),
@@ -981,7 +973,7 @@ void CombinedAccelSmem::iterateCombined(Policy policy, ManVec<pInd_t> &indexes, 
                 linkedPartIndInCache.data(),
                 lAccel.linksPerParticle.data(),
                 neighPartIndInCache.data(),
-                nList.numNeighs.data(),
+                numNeighsPossiblyPruned.data(),
                 selfPartIndInCache.data(),
                 lData.state.data(),
                 sideState.data(),
@@ -989,9 +981,9 @@ void CombinedAccelSmem::iterateCombined(Policy policy, ManVec<pInd_t> &indexes, 
                 pData.xCord.data(),
                 pData.yCord.data(),
                 pData.zCord.data(),
-
+                lAccel.particleLinkId.data(), lAccel.numPraticlesAllocated,
                 indexes.size(),
-                indexBlockSize,
+                indexBlockSize, lAccel.allocatedMaxLinks*128, cacheSizeLimit,
                 args
             )
         )));
@@ -1000,6 +992,45 @@ void CombinedAccelSmem::iterateCombined(Policy policy, ManVec<pInd_t> &indexes, 
 #else
 #endif
 }
+
+#ifdef SMEM_LINKS
+
+template<class Policy, typename LFun, class FullArgs>
+void CombinedAccelSmem::iterateLinks(Policy policy, ParticleData &pData, LinkData &lData,
+                  LFun &lFunc, FullArgs args) {
+
+
+
+    uint32_t sharedSize = 0;
+
+
+    auto [partArgs,linkSideArgs,linkArgs] = args.split();
+
+    sharedSize += (sizeof(hpReal_t) + sizeof(lpReal_t)) * 3;
+    sharedSize *= cacheCountLink;
+
+    uint32_t threads = 512;
+    uint32_t grid = numLinkBlocks;
+
+
+    getErrorDev(((pairIteratorLinksCache<<<grid, threads, sharedSize>>>(
+        lData.ownedIndexes.data(), lData.ownedIndexes.size(),
+        lFunc,
+        activeInBlockLink.data(),
+        // blockIndexes.data(),
+        cachingIndexesLink.data(),
+        localPartIndACache.data(), localPartIndBCache.data(),
+        lData.sideIndEndA.data(), lData.sideIndEndB.data(), lData.state.data(),
+        sideState.data(),
+        cacheCountLink,
+        linksPerBlock,
+        args
+    ))));
+
+    Iterator::syncAll();
+
+}
+#endif
 
 #endif //PHELL_COMBINEDACCELSMEM_H
 

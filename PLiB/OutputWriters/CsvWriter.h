@@ -56,7 +56,7 @@ class CsvWriter {
         if(buffer.length() + line.length() >= maxBuffer){
             bytesWritten += buffer.length();
             file.write(buffer.c_str(), buffer.length());
-            buffer = "";
+            buffer.clear();
         }
         buffer += line;
     }

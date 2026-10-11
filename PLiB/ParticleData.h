@@ -15,8 +15,9 @@
 #include <ParallelReduce.h>
 
 #include "Global.h"
-#include "GlobalLocalMapper.h"
+#include "OffloadHashMap.h"
 #include "Util/Util.h"
+
 
 class ParticleData : public ManagedParent {
 public:
@@ -35,69 +36,13 @@ public:
 
     ManVec<lpReal_t> radius;
 
-
-    // in reality the same as sizeof the cordinate vectors but...
     size_t numLocal = 0;
-// from here down i want to move off to user data
 
     ParticleData(const ParticleData &old_obj) = delete;
 
     ParticleData(ParticleData &&) = delete;
 
     ParticleData() = default;
-
-    /*
-    hpReal_t getXDiff(lInd_t indA, lInd_t indB) {
-        return xCord[indA] - xCord[indB];
-    }
-    hpReal_t getYDiff(lInd_t indA, lInd_t indB) {
-        return yCord[indA] - yCord[indB];
-    }
-    hpReal_t getZDiff(lInd_t indA, lInd_t indB) {
-        return zCord[indA] - zCord[indB];
-    }
-
-    hpReal_t getXCord(lInd_t ind) {
-        return xCord[ind];
-    }
-    hpReal_t getYCord(lInd_t ind) {
-        return yCord[ind];
-    }
-    hpReal_t getZCord(lInd_t ind) {
-        return zCord[ind];
-    }
-
-    hpReal_t getXCordPrev(lInd_t ind) {
-        return xCordPrev[ind];
-    }
-    hpReal_t getYCordPrev(lInd_t ind) {
-        return yCordPrev[ind];
-    }
-    hpReal_t getZCordPrev(lInd_t ind) {
-        return zCordPrev[ind];
-    }
-
-    void setXCord(hpReal_t val, lInd_t ind) {
-        xCord[ind] = val;
-    }
-    void setYCord(hpReal_t val, lInd_t ind) {
-        yCord[ind] = val;
-    }
-    void setZCord(hpReal_t val, lInd_t ind) {
-        zCord[ind] = val;
-    }
-
-    void setXCordPrev(hpReal_t val, lInd_t ind) {
-        xCordPrev[ind] = val;
-    }
-    void setYCordPrev(hpReal_t val, lInd_t ind) {
-        yCordPrev[ind] = val;
-    }
-    void setZCordPrev(hpReal_t val, lInd_t ind) {
-        zCordPrev[ind] = val;
-    }
-    */
-
 
     std::tuple<hpReal_t, hpReal_t, hpReal_t, hpReal_t, hpReal_t, hpReal_t> getLimits() {
 
@@ -114,8 +59,6 @@ public:
     }
 
     std::tuple<hpReal_t, hpReal_t, hpReal_t, hpReal_t, hpReal_t, hpReal_t> getLimitsOwned() {
-
-
 
         hpReal_t xMax = std::numeric_limits<hpReal_t>::lowest();
         hpReal_t yMax = std::numeric_limits<hpReal_t>::lowest();
@@ -146,7 +89,7 @@ public:
         Iterator::iterate(policy, fun, numLocal, args...);
     }
 
-    void remap(GlobalLocalMapper<gKey_t, pInd_t> &mapper) {
+    void remap(OffloadHashMap<gKey_t, pInd_t> &mapper) {
         //xvtxRangePush("ParticleData remap");
         auto start = std::chrono::steady_clock::now();
         int self = 0;
@@ -169,7 +112,7 @@ public:
         ownedIndexes.clear();
         nonOwnedIndexes.clear();
 
-        for (int i = 0; i < numLocal; i++) {
+        for (size_t i = 0; i < numLocal; i++) {
             if (owners[i] == getLocalRank()) {
                 ownedIndexes.push_back(i);
             } else {

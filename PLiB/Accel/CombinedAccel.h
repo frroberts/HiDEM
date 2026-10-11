@@ -98,7 +98,6 @@ public:
     template<class Policy, typename NFun, typename LFun, class FullArgs>
     void iterateCombinedPre(Policy policy, ParticleData &pData, LinkData &lData,
                          NFun &nFunc, LFun &lFunc, FullArgs args) {
-// #define ENABLE_ASYNC_COMM
 #ifdef ENABLE_ASYNC_COMM
 
         iterateCombined(policy, preCommIndexes, pData, lData, nFunc, lFunc, args);
@@ -250,12 +249,12 @@ public:
 
             auto partA = getAtIndTuple(aParticleInd, partArgs);
             auto partB = getAtIndTuple(bParticleInd, partArgs);
-            //auto sideA = getAtIndTuple(bParticleInd, partArgs);
-            //auto sizeB = getAtIndTuple(bParticleInd, partArgs);
+            auto sideA = getAtIndTuple(lData.sideIndEndA[lInd], linkSideArgs);
+            auto sideB = getAtIndTuple(lData.sideIndEndB[lInd], linkSideArgs);
 
             uint8_t initialState = lData.state[lInd];
 
-            auto all = std::tuple_cat(partA, partB);
+            auto all = std::tuple_cat(partA, partB, sideA, sideB);
 
             auto linkVals = getAtIndTuple(lInd, linkArgs);
 

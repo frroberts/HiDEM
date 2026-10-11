@@ -26,6 +26,7 @@
 #cmakedefine SET_FP32
 #cmakedefine SET_CT_FP32
 #cmakedefine SET_LOCAL_ID_64
+#cmakedefine ENABLE_UNWIND
 #endif
 
 #if ( ENABLE_CUDA == 1) || ( ENABLE_HIP == 1)
@@ -53,9 +54,11 @@ typedef double hpReal_t;
 // fix until CUDA fixes its support for c++20 ...
 #if ( ENABLE_SIMD256 == 1) || ( ENABLE_SIMD512 == 1)
 #define REALT_TEMPL <typename lpReal_t>
+#define REALT_TEMPL_LONG template <typename lpReal_t>
 #define ENABLE_SIMD
 #else
 #define REALT_TEMPL
+#define REALT_TEMPL_LONG
 #endif
 
 #endif //PHELL_GLOBAL_H

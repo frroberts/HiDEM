@@ -18,6 +18,7 @@
 class LinkData : public ManagedParent {
 public:
     size_t numLocal = 0;
+    size_t numSideData = 0;
 
     // indexes
     ManVec<lInd_t> ownedIndexes;
@@ -80,27 +81,34 @@ public:
 
     }
 
-    void connectParticleLinks(GlobalLocalMapper<gKey_t, pInd_t> &pMapper) {
+    void connectParticleLinks(OffloadHashMap<gKey_t, pInd_t> &pMapper) {
         RangeV2 r("connect particles", 3);
 
         makeLocalPartEnds(pMapper);
     }
 
     // todo make it start from a specific offset
-    void makeLocalPartEnds(GlobalLocalMapper<gKey_t, pInd_t> &pMapper, int start = 0) {
+    void makeLocalPartEnds(OffloadHashMap<gKey_t, pInd_t> &pMapper, int start = 0) {
         RangeV2 r("make local link ends", 3);
 
-        int self;
-
-        MPI_Comm_rank(MPI_COMM_WORLD, &self);
-
-        // localPartIndA.clear();
-        // localPartIndB.clear();
         localPartIndA.resize(numLocal);
         localPartIndB.resize(numLocal);
 
-        pMapper.bulkGetLocal(globalKeyEndA, localPartIndA, start);
-        pMapper.bulkGetLocal(globalKeyEndB, localPartIndB, start);
+        pMapper.bulkGetValue(globalKeyEndA, localPartIndA, start);
+        pMapper.bulkGetValue(globalKeyEndB, localPartIndB, start);
+        Iterator::syncAll();
+
+        pInd_t notFound = pMapper.notFound();
+        auto checkValidEnds = [&](ManVec<pInd_t> &container) {
+            if (stx::find_if(EXECPOLICY container.begin(), container.end(),
+                             [=] DEVCALLABLE (pInd_t i) { return i == notFound; }) != container.end()) {
+                std::cout << "Dangling links found, connecting links failed " << std::endl;
+                exit(1);
+            }
+        };
+
+        checkValidEnds(localPartIndA);
+        checkValidEnds(localPartIndB);
 
         Iterator::syncAll();
     }
@@ -128,7 +136,7 @@ public:
         Iterator::syncAll();
     }
 
-    void remap(GlobalLocalMapper<gKey_t, lInd_t> &mapper) {
+    void remap(OffloadHashMap<gKey_t, lInd_t> &mapper) {
         RangeV2 r("remap links", 3);
         mapper.clear();
         mapper.setSize(globalKeys.size());
@@ -136,7 +144,7 @@ public:
         mapper.finalize();
     }
 
-    void remapHalos(GlobalLocalMapper<gKey_t, lInd_t> &mapper, ParticleData &pData) {
+    void remapHalos(OffloadHashMap<gKey_t, lInd_t> &mapper, ParticleData &pData) {
         RangeV2 r("remap halo links", 3);
 
         mapper.setSize(globalKeys.size());
@@ -146,17 +154,6 @@ public:
         activeKeys.resize(globalKeys.size());
         // todo possibility to optimize this to just map the halos
         mapper.bulkCreate(globalKeys);
-        /*
-        int localRank = getLocalRank();
-        // do we really need the openmp parallelism here ?
-        for (ind_t i = 0; i < globalKeys.size(); ++i) {
-            if (!keepInactive && state[i] == 0)
-                continue;
-            if (pData.owners[localPartIndA[i]] != localRank || pData.owners[localPartIndB[i]] != localRank) {
-                mapper.map(globalKeys[i], i);
-            }
-        }
-        */
         mapper.finalize();
     }
 
@@ -175,12 +172,10 @@ public:
         Iterator::iterate(OffloadExec(), [=] DEVCALLABLE(lInd_t i) {
             indexesPtr[i] = i;
         }, numLocal);
-
-#ifdef SOA_CT
-        ParallelSort::sortIndirectNLevel(indexesIn, packVecPtrs(particleLinkNum, localPartIndA));
-#else
-        ParallelSort::sortIndirectNLevel(indexesIn, packVecPtrs(localPartIndA, particleLinkNum));
-#endif
+        Iterator::syncAll();
+//         ParallelSort::sortIndirectNLevel(indexesIn, packVecPtrs(particleLinkNum, localPartIndA));
+        // maybe do by one side index, so pInd A and then side ind A
+        ParallelSort::sortIndirectNLevel(indexesIn, packVecPtrs(localPartIndA, localPartIndB));
 
         return indexesIn;
     }
@@ -199,6 +194,9 @@ public:
 
 
         Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (lInd_t i) {
+
+            if (newSideOrderPtr[i] == -1)
+                return;
             reverseLookupPtr[newSideOrderPtr[i]] = i;
         }, newSideOrder.size());
 
@@ -212,7 +210,7 @@ public:
 
     virtual void dropLinks(ManVec<lInd_t> &droppedLocalIndexes) = 0;
 
-    virtual void dropUnusedLinks(GlobalLocalMapper<gKey_t, pInd_t> &pMapper) = 0;
+    virtual void dropUnusedLinks(OffloadHashMap<gKey_t, pInd_t> &pMapper) = 0;
 
     virtual void dropBrokenLinks() = 0;
 
