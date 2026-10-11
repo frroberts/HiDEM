@@ -34,9 +34,9 @@ class FCCParticleGenerator : public ParticleGenerator  {
         int lowerXInt = 0;
         int lowerYInt = 0;
         int lowerZInt = 0;
-        int upperXInt = unitCellSize / spacing; // does this need a +1 ?
-        int upperYInt = unitCellSize / spacing; // does this need a +1 ?
-        int upperZInt = unitCellSize / spacing; // does this need a +1 ?
+        int upperXInt = 10; //floor(unitCellSize / spacing); // does this need a +1 ?
+        int upperYInt = 10; //floor(unitCellSize / spacing); // does this need a +1 ?
+        int upperZInt = 10; //floor(unitCellSize / spacing); // does this need a +1 ?
 
         lpReal_t cellSize = spacing;
         lpReal_t halfCell = cellSize / 2.f;

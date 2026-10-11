@@ -72,6 +72,7 @@ public:
         }
 
         MPI_Bcast(world.domains.data(), sizeof(Domain) * world.size, MPI_BYTE, 0, MPI_COMM_WORLD);
+        // world.domiansToVTKHDF("initial.vtkhdf");
     }
 
 

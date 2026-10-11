@@ -277,7 +277,7 @@ position = [250,250,500] # optional, otherwise 0
 
 Additionally meshes support a `shellScale` argument, which is used to determine how much of a shell around (or within) the geomtry is used when generating particles. The value is based on the particle diameter, a shell scale of 1 will leave at least a 1 particle radius of clear space around the geometry (measured from the particle center).
 
-![](Images/ShellScale.png "HCP lattice")
+![](Images/ShellScale.png "Shell scale")
 
 ## Collision geometry
 

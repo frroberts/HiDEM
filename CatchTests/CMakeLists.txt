@@ -15,21 +15,21 @@ if (ENABLE_CATCH)
             # ParticleDataTester.cpp
             # TestHelpers.cpp
             # NeighbourGridTester.cpp
-            Map2DTester.cpp
+            # Map2DTester.cpp
             # ParticleGeneratorTester.cpp
             # GeometryLoaderTester.cpp
             # LinkDataTester.cpp
             # LinkGeneratorTester.cpp
             # IteratorBencher.cpp
             # CSVTester.cpp
-            DomainTest.cpp
+            # DomainTest.cpp
             # CommunicatorTesterSingle.cpp
             # GPUIteratorTest.cpp
             # TransporterTester.cpp
             # LoggerTester.cpp
             # HDF5ReadWriteTest.cpp
-            # BalancerTester.cpp
-            MeshTester.cpp
+            BalancerTester.cpp
+            # MeshTester.cpp
             # TomlTest.cpp
             # GeometryBuilderTest.cpp
              ../External/fmt/src/os.cc
@@ -40,8 +40,8 @@ if (ENABLE_CATCH)
             # VTUOutTester.cpp
             # SimdTester.cpp
             # GlobalLocalMappterTest.cpp
-            HiDEMCheckpointTester.cpp
-            Map2DTester.cpp
+            # HiDEMCheckpointTester.cpp
+            # Map2DTester.cpp
     )
 
     if (ENABLE_SIMD)

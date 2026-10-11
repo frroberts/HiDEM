@@ -16,17 +16,33 @@
 #include "../Domain.h"
 
 #include <ParallelReduce.h>
+#include "../PLiB/Global.h"
+
+
+
+#include "DevPortabilityLayer.h"
+
+enum SplitDim
+{
+    X, Y, Z
+};
+
+
+struct BalancerDomain
+{
+    Domain currentDomain;
+    int numChildren;
+    int parentDomains;
+    Domain parent;
+    SplitDim dim;
+    Real3 domainSize;
+    double targetLoad;
+    bool done;
+};
 
 class Balancer {
+
 public:
-
-    enum SplitDim
-    {
-        X, Y, Z
-    };
-
-    Domain getMidpoint(int *indexPtr, int indexCount, Domain bounding, SplitDim splitDir, Real3 prevSize,
-        double target, double current, int iter = 0);
 
     std::string getIndent(int iter)
     {
@@ -39,32 +55,45 @@ public:
 
     int maxDepth = 32;
     double tolerance = 0.005;
+    int samplePoints = 10000000;
+    bool sampled = true;
     bool verbose = false;
     ManVec<double> *xCords;
     ManVec<double> *yCords;
     ManVec<double> *zCords;
     ManVec<double> *weights;
+
+    ManVec<double> xCordsSampled;
+    ManVec<double> yCordsSampled;
+    ManVec<double> zCordsSampled;
+    ManVec<double> weightsSampled;
+
+    ManVec<double> sums;
+    ManVec<double, ScratchAllocator<double>> localLoads;
+    ManVec<double> globalLoads;
+    ManVec<int> colors;
+    ManVec<int> keys;
+
     int numParticles;
     std::vector<Domain> domains;
     MPI_Comm comm = MPI_COMM_WORLD;
 
     bool xActive = true;
-    bool yActive = true;
+    bool yActive = true; 
     bool zActive = true;
 
     Balancer() {
         //
     };
 
-    Domain getUpper(Domain parent, Domain lower, SplitDim splitDir);
-
     void setComm(MPI_Comm newComm);
     void setBuffers(ManVec<double> &xCords, ManVec<double> &yCords, ManVec<double> &zCords, ManVec<double> &weights);
-    void split(Domain parent, int numDomains, int *indexPtr, int indexCount);
-    std::vector<Domain> balance(int numDomains, double halo, Domain bounding);
-    double getDomainLoad(Domain &dom, int *indexPtr, int indexCount) ;
 
-    double getDomainLocalLoad(Domain &dom, int *indexPtr, int indexCount);
+    void getLocalLoadBulk(ManVec<BalancerDomain> &currentDomains);
+
+    void split(ManVec<BalancerDomain> &currentDomains,
+               ManVec<BalancerDomain> &nextDomains);//, int *indexPtr, int indexCount);
+    std::vector<Domain> balance(int numDomains, double halo, Domain bounding);
 };
 
 

@@ -7,6 +7,7 @@
 
 #include "ManVec.h"
 #include <random>
+#include "../PLiB/LoggerV2/RangeCollection.h"
 
 #if ENABLE_CUDA
 #include <curand.h>
@@ -57,39 +58,41 @@ public:
         values.resize(count);
     }
 
-    void reGenerate(){
-        RangeV2 r("random regen", 3);
-        regenCount++;
-
-#if ENABLE_CUDA
-        curandGenerateUniform(gen, values.data(), count);
-
-        cudaDeviceSynchronize();
-#elif ENABLE_HIP
-        hiprandGenerateUniform(gen, values.data(), count);
-
-        hipDeviceSynchronize();
-#else
-
-#pragma omp parallel
-        {
-            // never seed with 0
-            std::mt19937 gen(2+regenCount);
-            std::uniform_real_distribution<float> dist(0.0, 1.0);
-
-#pragma omp for
-            for (int i = 0; i < count; ++i) {
-                values[i] = dist(gen);
-            }
-        }
-#endif
-    }
-
+    void reGenerate();
     ManVec<T> &getVec(){
         return values;
     }
 
 
 };
+
+template <typename T>
+void BulkRandom<T>::reGenerate(){
+    RangeV2 r("random regen", 3);
+    regenCount++;
+
+#if ENABLE_CUDA
+    curandGenerateUniform(gen, values.data(), count);
+
+    cudaDeviceSynchronize();
+#elif ENABLE_HIP
+    hiprandGenerateUniform(gen, values.data(), count);
+
+    hipDeviceSynchronize();
+#else
+
+#pragma omp parallel
+    {
+        // never seed with 0
+        std::mt19937 gen(2+regenCount);
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+
+#pragma omp for
+        for (int i = 0; i < count; ++i) {
+            values[i] = dist(gen);
+        }
+    }
+#endif
+}
 
 #endif //PHELL_BULKRANDOM_H

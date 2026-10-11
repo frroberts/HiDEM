@@ -4,183 +4,312 @@
 
 #include "Balancer.h"
 
-#include <tuple>
 #include <queue>
 #include <mpi.h>
 #include <cmath>
 #include <random>
-//#include <fmt/core.h>
-//#include <fmt/ranges.h>
 
 #include "../Logger/Logger.h"
 #include "../Util/Util.h"
 
 #include <Iterator.h>
-#include <ThrustHelper.h>
+
+#include "../PLiB/Global.h"
+
+#ifdef GPU
+
+#include <thrust/gather.h>
+#include <thrust/execution_policy.h>
+#include <thrust/shuffle.h>
+#include <thrust/random.h>
+#include <thrust/sequence.h>
+
+#include "AtomicOps.h"
 
 
-Domain Balancer::getMidpoint(int *indexPtr, int indexCount, Domain bounding, SplitDim splitDir, Real3 prevSize,
-    double target, double current, int iter) {
-    //  logic of what size we use is wrong
+__global__ void domainReduceLocal(hpReal_t *xCords,hpReal_t *yCords,hpReal_t *zCords,hpReal_t *weights, double *loads, BalancerDomain *domains, int numDomains) {
+    //
+    __shared__ double domainLoads[128];
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    int tid = threadIdx.x;
+    if (tid < 128) {
+        domainLoads[tid] = 0;
+    }
+    __syncthreads();
 
-    double sign = 1;
-
-    if ((current <= target + target * tolerance) && (current >= target - target * tolerance)) {
-        if (verbose)
-            Logger::writeAtFirst( getIndent(iter) + std::to_string(current) + " load within tolerance returning, "+std::to_string(iter)+" steps\n");
-        bounding.load = current;
-        return bounding;
+    Real3 cord = {xCords[i], yCords[i], zCords[i]};
+    for (int j = 0; j < numDomains; j++) {
+        if (domains[j].done) {
+            continue;
+        }
+        if (domains[j].currentDomain.within(cord)) {
+            Atomic::atomicAddVal(domainLoads[j], weights[i]);
+        }
     }
 
-    if (iter > maxDepth) {
-        if (verbose)
-            Logger::writeAtFirst( getIndent(iter) + "at max iter giving up \n");
-        bounding.load = current;
-        return bounding;
+    __syncthreads();
+    for (int j = threadIdx.x; j < numDomains; j+= blockDim.x) {
+        Atomic::atomicAddVal(loads[j], domainLoads[j]);
+
     }
-
-    if (current > (target)) {
-        // go down in size
-        sign = -1;
-        if (verbose)
-            Logger::writeAtFirst( getIndent(iter) + " target " + std::to_string(target) + " " +  std::to_string(current) + " down in size ");
-
-    } else if (current < (target)) {
-        // go up in size
-        sign = 1;
-        if (verbose)
-            Logger::writeAtFirst( getIndent(iter) + " target " + std::to_string(target) + " " +  std::to_string(current) + " up in size ");
-    }
-
-    Real3 size = prevSize;
-
-    switch (splitDir) {
-        case SplitDim::X:
-            size.x /= 2.0;
-            if (verbose)
-                Logger::writeAtFirst( "X old upper " + std::to_string(bounding.upper.x));
-            bounding.upper.x += sign * size.x;
-            if (verbose)
-                Logger::writeAtFirst( " new upper " + std::to_string(bounding.upper.x) + "\n");
-            break;
-        case SplitDim::Y:
-            size.y /= 2.0;
-            if (verbose)
-                Logger::writeAtFirst( "Y old upper " + std::to_string(bounding.upper.y));
-            bounding.upper.y += sign * size.y;
-            if (verbose)
-                Logger::writeAtFirst( " new upper " + std::to_string(bounding.upper.y) + "\n");
-            break;
-        case SplitDim::Z:
-            size.z /= 2.0;
-            if (verbose)
-                Logger::writeAtFirst( "Z old upper " + std::to_string(bounding.upper.z));
-            bounding.upper.z += sign * size.z;
-            if (verbose)
-                Logger::writeAtFirst( " new upper " + std::to_string(bounding.upper.z) + "\n");
-            break;
-    }
-
-    double next = getDomainLoad(bounding, indexPtr, indexCount);
-
-    return getMidpoint(indexPtr, indexCount, bounding, splitDir, size, target, next, ++iter);
 }
+
+void Balancer::getLocalLoadBulk(ManVec<BalancerDomain> &currentDomains) {
+    dim3 block = {1024};
+    dim3 grid = {1 + (numParticles / block.x)};
+    for (auto i = 0; i < currentDomains.size(); i+= 128) {
+        int domainsInIter = currentDomains.size()-i;
+        if (domainsInIter > 128) {
+            domainsInIter = 128;
+        }
+
+        domainReduceLocal<<<grid, block>>>(xCords->data(), yCords->data(), zCords->data(),weights->data(),
+                                           localLoads.data()+i, currentDomains.data()+i, domainsInIter);
+    }
+}
+#else
+void Balancer::getLocalLoadBulk(ManVec<BalancerDomain> &currentDomains) {
+    //
+#pragma omp parallel
+    {
+        std::vector<double> threadLoads(currentDomains.size(), 0.0);
+#pragma omp for
+        for (int i = 0; i < numParticles; ++i) {
+            //
+            Real3 cord = {(*xCords)[i], (*yCords)[i], (*zCords)[i]};
+            for (int j = 0; j < currentDomains.size(); j++) {
+                if (currentDomains[j].done)
+                    continue;
+                if (currentDomains[j].currentDomain.within(cord)) {
+                    threadLoads[j] += (*weights)[i];
+                }
+            }
+        }
+#pragma omp critical
+        {
+            for (int j = 0; j < currentDomains.size(); j++) {
+                localLoads[j] += threadLoads[j];
+            }
+        }
+    }
+}
+#endif
 
 
 void Balancer::setComm(MPI_Comm newComm) {
     comm = newComm;
 }
 
-void Balancer::setBuffers(ManVec<double> &xCords, ManVec<double> &yCords, ManVec<double> &zCords, ManVec<double> &weights) {
-    this->xCords = &xCords;
-    this->yCords = &yCords;
-    this->zCords = &zCords;
-    this->weights = &weights;
-    numParticles = xCords.size();
-}
-
-Domain Balancer::getUpper(Domain parent, Domain lower, SplitDim splitDir) {
-    //
-    Domain upperPart = parent;
-    switch (splitDir) {
-        case SplitDim::X:
-            upperPart.lower.x = lower.upper.x;
-            break;
-        case SplitDim::Y:
-            upperPart.lower.y = lower.upper.y;
-            break;
-        case SplitDim::Z:
-            upperPart.lower.z = lower.upper.z;
-            break;
-    }
-    return upperPart;
-}
-
-
-
-void Balancer::split(Domain parent, int numDomains, int *indexPtr, int indexCount) {
-    if (numDomains == 1) {
-        domains.push_back(parent);
-        return;
-    }
-
-    double lowerBlock = std::floor(numDomains / 2.0);
-    double upperBlock = std::ceil(numDomains / 2.0);
-    double ratio = lowerBlock / numDomains;
-
-    int64_t globalLoad = parent.load;
-    int64_t halfLoad = globalLoad * ratio;
-
-    auto size = parent.getSize();
-
-    SplitDim splitDir = SplitDim::Y;
-    if (zActive)
+void Balancer::setBuffers(ManVec<double> &xCords, ManVec<double> &yCords, ManVec<double> &zCords, ManVec<double> &weights)
+{
+    if (xCords.size() > samplePoints && sampled)
     {
-        if (size.x > size.y && size.x > size.z)
-        {
-            splitDir = SplitDim::X;
-        }
-        else if (size.z > size.x && size.z > size.y)
-        {
-            splitDir = SplitDim::Z;
-        }
+        numParticles = samplePoints;
+
+        xCordsSampled.resize(numParticles);
+        yCordsSampled.resize(numParticles);
+        zCordsSampled.resize(numParticles);
+        weightsSampled.resize(numParticles);
+
+        ManVec<pInd_t> indexes;
+        indexes.resize(xCords.size());
+
+#ifdef GPU
+        thrust::sequence(EXECPOLICY indexes.begin(), indexes.end());
+        thrust::default_random_engine rng(123);
+        thrust::shuffle(EXECPOLICY indexes.begin(), indexes.end(), rng);
+
+        thrust::gather(EXECPOLICY indexes.begin(), indexes.begin() + numParticles, xCords.begin(), xCordsSampled.begin());
+        thrust::gather(EXECPOLICY indexes.begin(), indexes.begin() + numParticles, yCords.begin(), yCordsSampled.begin());
+        thrust::gather(EXECPOLICY indexes.begin(), indexes.begin() + numParticles, zCords.begin(), zCordsSampled.begin());
+        thrust::gather(EXECPOLICY indexes.begin(), indexes.begin() + numParticles, weights.begin(), weightsSampled.begin());
+#else
+        std::iota(indexes.begin(), indexes.end(), 0);
+        std::mt19937 g(123);
+
+        std::shuffle(indexes.begin(), indexes.end(), g);
+
+        Iterator::iterate(OffloadExec(), [&] DEVCALLABLE (int i) {
+            //
+            int ind = indexes[i];
+            xCordsSampled[i] = xCords[ind];
+            yCordsSampled[i] = yCords[ind];
+            zCordsSampled[i] = zCords[ind];
+            weightsSampled[i] = weights[ind];
+
+        }, numParticles);
+#endif
+
+        this->xCords = &xCordsSampled;
+        this->yCords = &yCordsSampled;
+        this->zCords = &zCordsSampled;
+        this->weights = &weightsSampled;
+
     } else
     {
-        if (size.x > size.y)
+        this->xCords = &xCords;
+        this->yCords = &yCords;
+        this->zCords = &zCords;
+        this->weights = &weights;
+        numParticles = xCords.size();
+    }
+    sums.resize(numParticles);
+
+}
+
+void Balancer::split(ManVec<BalancerDomain> &currentDomains, ManVec<BalancerDomain> &nextDomains)
+{
+
+    auto domainPtr = currentDomains.data();
+    for (auto &current: currentDomains)
+    {
+        current.parentDomains = current.numChildren;
+        current.parent = current.currentDomain;
+        double lowerBlock = std::floor(current.numChildren / 2.0);
+
+        double ratio = lowerBlock / current.numChildren;
+
+        // double fullLoad = parent.d.load;
+        current.targetLoad = current.currentDomain.load * ratio;
+
+        auto size = current.currentDomain.getSize();
+
+        current.dim = SplitDim::Y;
+        if (zActive)
         {
-            splitDir = SplitDim::X;
+            if (size.x > size.y && size.x > size.z)
+            {
+                current.dim = SplitDim::X;
+            }
+            else if (size.z > size.x && size.z > size.y)
+            {
+                current.dim = SplitDim::Z;
+            }
         }
+        else
+        {
+            if (size.x > size.y)
+            {
+                current.dim = SplitDim::X;
+            }
+        }
+
+        current.domainSize = current.currentDomain.getSize();
+        current.parent = current.currentDomain;
+        current.numChildren = lowerBlock;
+        current.done = false;
     }
 
-    Domain lowerPart = getMidpoint(indexPtr, indexCount, parent, splitDir, parent.getSize(), halfLoad, globalLoad);
-    Domain upperPart = getUpper(parent, lowerPart, splitDir);
-    upperPart.load = globalLoad - lowerPart.load;
+    localLoads.resize(currentDomains.size());
+    globalLoads.resize(currentDomains.size());
+    auto localLoadPtr = localLoads.data();
 
-    double *xPtr = xCords->data();
-    double *yPtr = yCords->data();
-    double *zPtr = zCords->data();
+    for (int iter = 0; iter < maxDepth; iter++) {
 
-    auto point = stx::stable_partition( EXECPOLICY
-        indexPtr, indexPtr+indexCount,
-        [=] DEVCALLABLE (int i)
+        Iterator::iterate(OffloadExec(),[=] DEVCALLABLE (int i) {
+            auto &current = domainPtr[i];
+            localLoadPtr[i] = 0;
+
+            if (current.done)
+                return;
+
+            double sign = 1;
+
+            if (current.currentDomain.load > (current.targetLoad)) {
+                // go down in size
+                sign = -1;
+            } else if (current.currentDomain.load < (current.targetLoad)) {
+                // go up in size
+                sign = 1;
+            }
+
+            Real3 cnst = {0};
+            switch (current.dim) {
+                case SplitDim::X:
+                    cnst.x = sign;
+                    break;
+                case SplitDim::Y:
+                    cnst.y = sign;
+                    break;
+                case SplitDim::Z:
+                    cnst.z = sign;
+                    break;
+            }
+            current.domainSize = current.domainSize / 2.0;
+            current.currentDomain.upper = current.currentDomain.upper + (cnst * current.domainSize);
+
+        }, currentDomains.size());
+
+        getLocalLoadBulk(currentDomains);
+
+        Iterator::syncAll();
+
+        MPI_Allreduce(localLoads.data(), globalLoads.data(), currentDomains.size(), MPI_DOUBLE, MPI_SUM, comm);
+
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i) {
+            auto &current = domainPtr[i];
+
+            if (!current.done)
+                current.currentDomain.load = globalLoads[i];
+
+            if ((current.currentDomain.load <= current.targetLoad + current.targetLoad * tolerance) &&
+                (current.currentDomain.load >= current.targetLoad - current.targetLoad * tolerance)) {
+                current.done = true;
+            }
+        }, currentDomains.size());
+
+        bool allDone = ParStd::transform_reduce(EXECPOLICY currentDomains.begin(), currentDomains.end(), true,
+                                             []DEVCALLABLE (bool a, bool b) {
+                                                 return a && b;
+                                             }, [=] DEVCALLABLE (BalancerDomain b) {
+                                                 return b.done;
+                                             });
+
+        if (allDone)
+            break;
+        Iterator::syncAll();
+    }
+
+    for (auto &current : currentDomains)
+    {
+
+        BalancerDomain upperPart;
+        upperPart.numChildren = current.parentDomains - current.numChildren;
+
+        upperPart.currentDomain = current.parent;
+        switch (current.dim)
         {
-            double x = xPtr[i];
-            double y = yPtr[i];
-            double z = zPtr[i];
+        case SplitDim::X:
+            upperPart.currentDomain.lower.x = current.currentDomain.upper.x;
+            break;
+        case SplitDim::Y:
+            upperPart.currentDomain.lower.y = current.currentDomain.upper.y;
+            break;
+        case SplitDim::Z:
+            upperPart.currentDomain.lower.z = current.currentDomain.upper.z;
+            break;
+        }
 
-            bool in = lowerPart.within(Real3{x, y, z});
-            return in;
-        });
-    int splitCount = point-indexPtr;
+        upperPart.currentDomain.load = current.parent.load - current.currentDomain.load;
 
-    split(lowerPart, static_cast<int>(lowerBlock), indexPtr, splitCount);
-    split(upperPart, static_cast<int>(upperBlock), indexPtr+splitCount, indexCount-splitCount);
+
+        if (upperPart.numChildren == 1) {
+            domains.push_back(upperPart.currentDomain);
+        } else {
+            nextDomains.push_back(upperPart);
+        }
+        if (current.numChildren == 1) {
+            domains.push_back(current.currentDomain);
+        } else {
+            nextDomains.push_back(current);
+        }
+    }
 }
 
 std::vector<Domain> Balancer::balance(int numDomains, double halo, Domain bounding) {
-    //
-    // possible optimization here would be to shuffle the coordinates and weights over ranks so that lower down there would be more GPUs active
-    numParticles = xCords->size();
+
+    domains.clear();
+
     double localLoad = stx::reduce(EXECPOLICY weights->begin(), weights->end(), 0, std::plus<double>());
     MPI_Allreduce(&localLoad, &bounding.load, 1, MPI_DOUBLE, MPI_SUM, comm);
     // bounding.load = numParticles;
@@ -192,7 +321,21 @@ std::vector<Domain> Balancer::balance(int numDomains, double halo, Domain boundi
     }, numParticles);
     Iterator::syncAll();
 
-    split(bounding, numDomains, indexes.data(), indexes.size());
+    ManVec<BalancerDomain> currentDomains;
+
+    // no need to do any balancer shenanigans if we only run one domain
+    if (numDomains > 1) {
+        currentDomains.push_back(BalancerDomain(bounding, numDomains));
+    } else {
+        domains.push_back(bounding);
+    }
+    while (!currentDomains.empty())
+    {
+        ManVec<BalancerDomain> nextDomains;
+
+        split(currentDomains, nextDomains);
+        std::swap(nextDomains, currentDomains);
+    }
 
     std::vector<double> localLoads;
     std::vector<double> allLoads;
@@ -202,7 +345,7 @@ std::vector<Domain> Balancer::balance(int numDomains, double halo, Domain boundi
     }
     // odd behaviour without barrier
     MPI_Barrier(comm);
-    MPI_Allgather(&localLoads[0], numDomains, MPI_DOUBLE, &allLoads[0], numDomains, MPI_DOUBLE, comm);
+    MPI_Allgather(localLoads.data(), numDomains, MPI_DOUBLE, allLoads.data(), numDomains, MPI_DOUBLE, comm);
 
 
     double maxLoad = std::numeric_limits<double>::lowest();
@@ -238,39 +381,6 @@ std::vector<Domain> Balancer::balance(int numDomains, double halo, Domain boundi
 
     return domains;
 }
-
-double Balancer::getDomainLoad(Domain &dom, int *indexPtr, int indexCount)  {
-    double localLoad = 0;
-    double globalLoad = 0;
-
-    localLoad = getDomainLocalLoad(dom, indexPtr, indexCount);
-
-    MPI_Allreduce(&localLoad, &globalLoad, 1, MPI_DOUBLE, MPI_SUM, comm);
-    return globalLoad;
-}
-
-double Balancer::getDomainLocalLoad(Domain &dom, int *indexPtr, int indexCount) {
-    double localLoad = 0;
-    double *xPtr = xCords->data();
-    double *yPtr = yCords->data();
-    double *zPtr = zCords->data();
-    double *wPtr = weights->data();
-
-    // std::transform_reduce
-
-    localLoad = ParStd::transform_reduce(EXECPOLICY indexPtr, indexPtr + indexCount, 0, [] DEVCALLABLE (int a, int b) -> int
-        {return a+b;}, [=] DEVCALLABLE  (int ind) -> int
-    {
-        double x = xPtr[ind];
-        double y = yPtr[ind];
-        double z = zPtr[ind];
-
-        return dom.within(Real3{x,y,z}) * wPtr[ind]; // should incorporate weight
-    });
-
-    return localLoad;
-}
-
 
 
 
