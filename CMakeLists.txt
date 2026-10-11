@@ -85,7 +85,7 @@ endif ()
 
 if (ENABLE_CUDA)
     check_language(CUDA REQUIRED)
-    set(CMAKE_CUDA_ARCHITECTURES "75" "86" "80")
+    set(CMAKE_CUDA_ARCHITECTURES "75")
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr -std=c++20 -lineinfo -g -allow-unsupported-compiler -lcurand" )
 
     enable_language(CUDA)

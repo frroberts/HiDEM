@@ -590,8 +590,12 @@ namespace {
         template<typename Tdat>
         static void copy(Tdat *targetBuffer, Tdat *fromBuffer, int count) {
             // this is really a memcpy
-            // if building for GPU check what the pointer is and do cudamemcpy if it is
+            // if building for GPU check what the pointer is and do cudamemcpy if it is, or just allow the runtime to determine it
+#ifdef GPU
+            getErrorDevApi(devMemcpy (targetBuffer , fromBuffer, count, devMemcpyDefault));
+#else
             std::memcpy (targetBuffer , fromBuffer, count);
+#endif
         }
 
         template<typename Tdat, typename Tind>

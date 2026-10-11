@@ -164,7 +164,7 @@ public:
         }
     }
 
-    InputMesh *getCollisionMeshPtr() {
+    CollisionMesh *getCollisionMeshPtr() {
         if (geometry.geomCollection.getColMeshData())
             return geometry.geomCollection.getColMeshData().value();
         else {
@@ -281,17 +281,15 @@ public:
             Iterator::syncAll();
             MPI_Barrier(MPI_COMM_WORLD);
 
-            if (distr->linkStateComm.incommingIndexes.size() > 0) {
-                distr->linkStateComm.postRecvs();
-                distr->linkStateComm.packAllCommData(packVecPtrs(lDataPtr->state));
-                distr->linkStateComm.postSends();
-                distr->linkStateComm.syncRecvs();
-                // unpack by hand here, and if the state changes from broken to intact recreate the link on the remote
+            distr->linkStateComm.postRecvs();
+            distr->linkStateComm.packAllCommData(packVecPtrs(lDataPtr->state));
+            distr->linkStateComm.postSends();
+            distr->linkStateComm.syncRecvs();
+            // unpack by hand here, and if the state changes from broken to intact recreate the link on the remote
 
-                lDataPtr->updateStateInd(distr->linkStateComm.incommingIndexes, distr->linkStateComm.incommingBuffers);
+            lDataPtr->updateStateInd(distr->linkStateComm.incommingIndexes, distr->linkStateComm.incommingBuffers);
 
-                distr->linkStateComm.syncSends();
-            }
+            distr->linkStateComm.syncSends();
         }
         xvtxRangeEnd(range);
     }
@@ -574,14 +572,19 @@ public:
             distr->reDistribute(*pDataPtr, *lDataPtr, *pMapperPtr, *lMapperPtr, searchDistance * haloScale,
                                 reBalanceTolerance);
             MPI_Barrier(MPI_COMM_WORLD);
+
+            // distr->world.domiansToVTKHDF("domains" + std::to_string(currentTimestep) + ".vtkhdf");
+
             needsGridRegen = true;
             // needed to not fail the link regen
 
-            accel->generateLinks(*pDataPtr, *lDataPtr, searchDistance, interactDist);
-            accel->lAccel.sortSideData(*pDataPtr, *lDataPtr);
+            //accel->generateLinks(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+            //accel->lAccel.sortSideData(*pDataPtr, *lDataPtr);
         }
 
         if (needsGridRegen) {
+            xvtxRangePush("grid regen");
+
             Logger::writeAtFirst(
                 "grid regen ts: " + std::to_string(currentTimestep) + " distance: " + std::to_string(accumulatedDist) +
                 " limit: " + std::to_string((searchDistance - interactDist) / 2.0) + " \n", true);
@@ -591,21 +594,28 @@ public:
             accumulatedDist = 0;
 
             // regenerate neighbour list
+            xvtxRangePush("n accel regen");
 
             accel->generatePrePostCommIndexes(*pDataPtr, *lDataPtr, distr->pForceComm);
             accel->generateNeighbours(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+            xvtxRangePop();
 
+            xvtxRangePush("regen links");
             if(linkRegenEnabled) {
                 // regenerate all possible links
                 regenerateAllLinks();
                 Logger::writeAtFirst("links regenerated \n", true);
             }
+            xvtxRangePop();
 
+            xvtxRangePush("l accel regen");
             accel->generateLinks(*pDataPtr, *lDataPtr, searchDistance, interactDist);
             accel->lAccel.sortSideData(*pDataPtr, *lDataPtr);
             accel->generateIndexes(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+            xvtxRangePop();
 
             Logger::writeAtFirst("Grid regen out \n", true);
+            xvtxRangePop();
 
         }
     }
@@ -760,12 +770,6 @@ public:
         initBalancePoints = parser.getArg<int>("distribution.initBalancePoints").value_or(10000);
         initBalanceTolerance = parser.getArg<double>("distribution.initBalanceTolerance").value_or(0.001);
 
-        auto tomlTable = parser.table;
-
-        geometry.setup(parser, scale);
-
-        extForce = ExternalForceBuilder::build(parser.table);
-
         haloScale = parser.getArg<double>("distribution.haloScale").value_or(100.0);
         reBalanceTolerance = parser.getArg<double>("distribution.reBalanceTolerance").value_or(0.00001);
         reBalance = parser.getArg<bool>("distribution.reBalance").value_or(true);
@@ -787,6 +791,14 @@ public:
 
         linkRegenEnabled = parser.getArg<bool>("linkRegen.enabled").value_or(false);
 
+
+        auto tomlTable = parser.table;
+
+        geometry.setup(parser, scale);
+
+        // setup any defined external force
+        extForce = ExternalForceBuilder::build(parser.table);
+
         lpReal_t maxParticleDist = geometry.maxRadius * 2.0;
         searchDistance = searchDistanceScale * maxParticleDist;
         interactDist = searchDistance - maxParticleDist;
@@ -797,6 +809,7 @@ public:
             std::cout << "interactDist: " << interactDist << std::endl;
         }
 
+        // check if we need to start from a restart file
         std::optional<std::string> fromRestart = parser.getArg<std::string>("restart.fromRestart");
 
         if (fromRestart) {
@@ -812,7 +825,10 @@ public:
         distr = new HiDEMDistribution<PDataT,LDataT>(reBalance, searchDistance);
         distr->lTrans->keepInactive = linkRegenEnabled;
 
+        // generate domains based on the input geometry, or read them from checkpoint
         generateDomains(searchDistance * haloScale, *distr);
+
+        // build actual particle and link data
 
         buildData(*distr, searchDistance * haloScale, reBalanceTolerance);
 
@@ -966,11 +982,11 @@ public:
             // todo fix the partial local end making
             lDataPtr->makeLocalPartEnds(*pMapperPtr, 0);
 
-            generateOwnedNonOwned(lDataPtr->owners, lDataPtr->ownedIndexes, lDataPtr->nonOwnedIndexes, lDataPtr->numLocal);
         }
         {
             RangeV2 r("Make communicator", 3);
 
+            generateOwnedNonOwned(lDataPtr->owners, lDataPtr->ownedIndexes, lDataPtr->nonOwnedIndexes, lDataPtr->numLocal);
             distr->lTrans->getOutgoingHalo(distr->world, *pDataPtr, *lDataPtr);
             distr->lTrans->getIncomming(*lDataPtr);
 

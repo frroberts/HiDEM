@@ -188,18 +188,18 @@ public:
     void reindexSideData(ManVec<lInd_t> &newSideOrder) {
         RangeV2 r("reinidex links side data", 3);
 
-        ManVec<lInd_t> reverseLookup;
+        ManVec<lInd_t, ScratchAllocator<lInd_t>> reverseLookup;
         reverseLookup.resize((newSideOrder.size()));
 
         // needed to get iterator to work, should figure out how to pass manVecs from the stack at some point
         lInd_t *reverseLookupPtr = reverseLookup.data();
-        lInd_t *newCTOrderPtr = newSideOrder.data();
+        lInd_t *newSideOrderPtr = newSideOrder.data();
         lInd_t *sideIndEndAPtr = sideIndEndA.data();
         lInd_t *sideIndEndBPtr = sideIndEndB.data();
 
 
         Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (lInd_t i) {
-            reverseLookupPtr[newCTOrderPtr[i]] = i;
+            reverseLookupPtr[newSideOrderPtr[i]] = i;
         }, newSideOrder.size());
 
         Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (lInd_t i) {
@@ -209,25 +209,6 @@ public:
         Iterator::syncAll();
     }
 
-    int getMaxLinksPerParticle(int numParticles) {
-        ManVec<int> linksPerParticle;
-        linksPerParticle.resize(numParticles);
-        auto linksPerParticlePtr = linksPerParticle.data();
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (pInd_t i) {
-            linksPerParticlePtr[i] = 0;
-        }, numParticles);
-        auto *localPartIndAPtr = localPartIndA.data();
-        auto *localPartIndBPtr = localPartIndB.data();
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (lInd_t i) {
-            pInd_t pIndA = localPartIndAPtr[i];
-            pInd_t pIndB = localPartIndBPtr[i];
-            Atomic::atomicIncVal(linksPerParticlePtr[pIndA]);
-            Atomic::atomicIncVal(linksPerParticlePtr[pIndB]);
-        },numLocal);
-        Iterator::syncAll();
-        auto elem = stx::max_element(EXECPOLICY linksPerParticle.begin(), linksPerParticle.end() );
-        return *elem;
-    }
 
     virtual void dropLinks(ManVec<lInd_t> &droppedLocalIndexes) = 0;
 
@@ -248,6 +229,8 @@ public:
     virtual void resizeSideData(size_t newSize) = 0;
 
     virtual void dropSideData(ManVec<lInd_t> &droppedSideInd) = 0;
+
+    virtual void dropBrokenNonOwnedLinks() = 0;
 };
 
 

@@ -45,7 +45,7 @@ outWorkingPath = "../Data/"
 # The program will add the appropriate prefix to this name, wont be written if left empty or not present
 outParticleFile = "pOut"
 # the type of output we use, CSV or HDF5, VTK (buggy), VKTHDF
-outParticleType = "VTKHDF"
+outParticleType = "HDF5"
 # The program will add the appropriate prefix to this name, wont be written if left empty or not present
 outLinkFile = ""
 # the type of output we use, CSV or HDF5
@@ -55,6 +55,7 @@ outLinkType = ""
 outMeshFile = ""
 # the type of output we use, mehses only supported with VTKHDF
 outMeshType = ""
+
 
 [grid]
 # searchDistanceScale will compute max particle diameter * searchDistanceScale and use it for the distance
@@ -97,10 +98,9 @@ haloScale = 1.2
 
 # unscaled radius and spacing
 [lattice]
-type = "FCC"
-# yeah these constants are a bit arbitrary
+type = "File"
+path = "../HiDEM/Benchmark/11400k/particles.h5"
 particleRadius = 0.5
-fccSpacing = 1.41421
 linkGenScale = 1.2
 
 # seed for random generation

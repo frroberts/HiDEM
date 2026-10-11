@@ -48,6 +48,8 @@ public:
     template <class gType, class lType>
     void makeLocalIndexes(GlobalLocalMapper<gType, lType> &mapper)
     {
+            xvtxRangePush("makeLocalIndexes");
+
         //
         MPI_Barrier(MPI_COMM_WORLD);
 
@@ -92,11 +94,24 @@ public:
         Iterator::syncAll();
 
         MPI_Barrier(MPI_COMM_WORLD);
+        xvtxRangePop();
 
     }
 
     template<class Tind>
     void indirectIndexes(ManVec<Tind> &indirectIncommingAddresses, ManVec<Tind> &indirectOutgoingAddresses){
+
+        auto indirectOutgoingAddressesPtr = indirectOutgoingAddresses.data();
+        auto outgoingIndexesPtr = outgoingIndexes.data();
+        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i) {
+            outgoingIndexesPtr[i] = indirectOutgoingAddressesPtr[outgoingIndexesPtr[i]];
+        }, outgoingIndexes.size());
+        auto indirectIncommingAddressesPtr = indirectIncommingAddresses.data();
+        auto incommingIndexesPtr = incommingIndexes.data();
+        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i) {
+            incommingIndexesPtr[i] = indirectIncommingAddressesPtr[incommingIndexesPtr[i]];
+        }, incommingIndexes.size());
+        /*
         for (int i = 0; i < outgoingIndexes.size(); ++i) {
             //
             outgoingIndexes[i] = indirectOutgoingAddresses[outgoingIndexes[i]];
@@ -105,6 +120,9 @@ public:
             //
             incommingIndexes[i] = indirectIncommingAddresses[incommingIndexes[i]];
         }
+        */
+
+        Iterator::syncAll();
 
     }
 

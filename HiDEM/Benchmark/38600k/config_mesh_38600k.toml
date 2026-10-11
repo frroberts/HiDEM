@@ -1,6 +1,6 @@
 [general]
 # set size scale of particles and the entire system
-scale = 12.0
+scale = 8.0
 
 g = 9.81
 beamWidth = 0.5
@@ -97,10 +97,9 @@ haloScale = 1.2
 
 # unscaled radius and spacing
 [lattice]
-type = "FCC"
-# yeah these constants are a bit arbitrary
+type = "File"
+path = "../HiDEM/Benchmark/38600k/particles.h5"
 particleRadius = 0.5
-fccSpacing = 1.41421
 linkGenScale = 1.2
 
 # seed for random generation
@@ -133,6 +132,6 @@ rangeFactor = 1.5
 type = "mesh"
 name = "block"
 path = "../HiDEM/MeshBlock/wedge.obj"
-scale= [400,500,300]
+scale= [1200,6000,300]
 position = [0,0,330]
 shellScale = 5.0

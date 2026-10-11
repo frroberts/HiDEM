@@ -34,6 +34,8 @@ size_t Map2dLoader::readInput(std::string path) {
         auto words_end = std::sregex_iterator();
         fieldCount = std::distance(numColBeg, words_end);
 
+        std::string delimiter = " ";
+
         columns.resize(fieldCount);
 
         inFile.seekg(std::ios::beg);
@@ -84,6 +86,7 @@ size_t Map2dLoader::readInput(std::string path) {
     }
     loadEvent.end();
     Logger::writeAtFirst("Map2d Loaded: " + std::to_string(readLines) + " points loaded");
+    Logger::writeAtFirst(" " + std::to_string(xPoints) + " xPoints" + std::to_string(yPoints) + "yPoints \n");
     Logger::writeAtFirst("Map2d load time" + Logger::getLimits(loadEvent.getLastDuration(), "s") + "\n");
     return readLines;
 }

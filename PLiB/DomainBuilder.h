@@ -15,117 +15,11 @@
 #include "Geometry/InputGeometry.h"
 #include "Balancer/Balancer.h"
 
+//how many times halo scale should be added as a buffer on the outside of the outside domains
+#define BBSCALE 10
+
 class DomainBuilder {
 public:
-
-#define maxBB 1000
-
-    /*
-    static void generateDomains(int nx, int ny, double haloSize, Domain &bounding, World &world) {
-        if (world.size != (nx * ny)) {
-            Logger::writeAtFirst("number of static domains (nx*ny) != number of ranks\n");
-            exit(0);
-        }
-
-        Logger::writeAtFirst("generating " + std::to_string(world.size) + " number of non balanced domains\n");
-
-        Real3 size = bounding.upper - bounding.lower;
-        size.x /= nx;
-        size.y /= ny;
-
-        int i = 0;
-        std::vector<std::vector<Domain>> domains;
-        for (int x = 0; x < nx; ++x) {
-            domains.push_back(std::vector<Domain>());
-            for (int y = 0; y < ny; ++y) {
-                //
-                Domain d;
-                d.lower.x = bounding.lower.x + (size.x * x);
-                d.lower.y = bounding.lower.y + (size.y * y);
-                d.lower.z = bounding.lower.z;
-
-                d.upper.x = d.lower.x + (size.x);
-                d.upper.y = d.lower.y + (size.y);
-                d.upper.z = d.lower.z + (size.z);
-
-
-                // set box to some large number if at the edges
-                if (x == 0)
-                    d.lower.x += -maxBB;
-                if (y == 0)
-                    d.lower.y += -maxBB;
-
-                if (x == nx - 1)
-                    d.upper.x += maxBB;
-                if (y == ny - 1)
-                    d.upper.y += maxBB;
-
-                d.lowerHalo = d.lower - Real3{haloSize};
-                d.upperHalo = d.upper + Real3{haloSize};
-                d.owner = i;
-                domains.back().push_back(d);
-                i++;
-            }
-        }
-        for (int x = 0; x < nx; ++x) {
-            for (int y = 0; y < ny; ++y) {
-                //domains[x][y].print();
-                world.domains.push_back(domains[x][y]);
-            }
-        }
-    }
-
-    static void generateDomainsGeom(Map2d<double> bed, Map2d<double> surface, double haloSize,
-                                    double resolution, double tolerance, Domain &bounding, World &world) {
-        //
-        world.domains.resize(world.size);
-        std::vector<Domain> generatedDomains;
-        if (world.self == 0) {
-
-            ManVec<double> xCord;
-            ManVec<double> yCord;
-            ManVec<double> zCord;
-            ManVec<double> weights;
-
-            Real3 size = bounding.upper - bounding.lower;
-            Real3 incr = size / resolution;
-
-            for (double x = bounding.lower.x; x < bounding.upper.x; x += incr.x) {
-                for (double y = bounding.lower.y; y < bounding.upper.y; y += incr.y) {
-                    //
-                    double diff = surface.interp(x, y) - bed.interp(x, y);
-                    xCord.push_back(x);
-                    yCord.push_back(y);
-                    zCord.push_back(bounding.lower.z);
-                    weights.push_back(diff);
-                }
-            }
-
-            bounding.lower.x += -maxBB;
-            bounding.lower.y += -maxBB;
-            bounding.lower.z += -maxBB;
-
-            bounding.upper.x += maxBB;
-            bounding.upper.y += maxBB;
-            bounding.upper.z += maxBB;
-
-            bounding.setHalo(haloSize);
-            world.domains.resize(world.size);
-            //
-            Balancer geomBalancer;
-            geomBalancer.zActive = false;
-            geomBalancer.tolerance = tolerance;
-            geomBalancer.verbose = false;
-            geomBalancer.setComm(MPI_COMM_SELF);
-            geomBalancer.setBuffers(xCord, yCord, zCord, weights);
-            world.domains = geomBalancer.balance(world.size, haloSize, bounding);
-
-        }
-
-        MPI_Bcast(world.domains.data(), sizeof(Domain) * world.size, MPI_BYTE, 0, MPI_COMM_WORLD);
-
-    }
-     */
 
     static void generateDomainsSampled(std::shared_ptr<InputGeometry> geom, double haloSize, int numSamples, double tolerance,
                                        Domain &bounding, World &world) {
@@ -157,13 +51,13 @@ public:
                 }
             }
 
-            bounding.lower.x += -maxBB;
-            bounding.lower.y += -maxBB;
-            bounding.lower.z += -maxBB;
+            bounding.lower.x += -(haloSize*BBSCALE);
+            bounding.lower.y += -(haloSize*BBSCALE);
+            bounding.lower.z += -(haloSize*BBSCALE);
 
-            bounding.upper.x += maxBB;
-            bounding.upper.y += maxBB;
-            bounding.upper.z += maxBB;
+            bounding.upper.x += (haloSize*BBSCALE);
+            bounding.upper.y += (haloSize*BBSCALE);
+            bounding.upper.z += (haloSize*BBSCALE);
 
             bounding.setHalo(haloSize);
             world.domains.resize(world.size);
@@ -230,13 +124,13 @@ public:
         bounding.lower = {xMin_global, yMin_global, zMin_global};
         bounding.upper = {xMax_global, yMax_global, zMax_global};
 
-        bounding.lower.x += -10.0;
-        bounding.lower.y += -10.0;
-        bounding.lower.z += -10.0;
+        bounding.lower.x += -(haloSize*BBSCALE);
+        bounding.lower.y += -(haloSize*BBSCALE);
+        bounding.lower.z += -(haloSize*BBSCALE);
 
-        bounding.upper.x += 10.0;
-        bounding.upper.y += 10.0;
-        bounding.upper.z += 10.0;
+        bounding.upper.x += (haloSize*BBSCALE);
+        bounding.upper.y += (haloSize*BBSCALE);
+        bounding.upper.z += (haloSize*BBSCALE);
 
         Balancer geomBalancer;
         geomBalancer.zActive = false;

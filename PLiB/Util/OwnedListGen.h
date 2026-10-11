@@ -14,14 +14,20 @@
 
 template <typename T>
 void generateOwnedNonOwned(ManVec<int> &owners, ManVec<T> &ownedIndexes, ManVec<T> &nonOwnedIndexes, size_t count) {
-    ManVec<pInd_t> allIndexes;
-    allIndexes.resize(count);
+    xvtxRangePush("OwnedNonOwned");
+    ManVec<pInd_t, ScratchAllocator<pInd_t>> allIndexes;
+    //ManVec<pInd_t> allIndexes;
+    allIndexes.resize(count, false);
 
+
+    xvtxRangePush("what");
     auto allIndexesPtr = allIndexes.data();
     Iterator::iterate(OffloadExec(), [=] DEVCALLABLE(ind_t i) {
         allIndexesPtr[i] = i;
     }, count);
     Iterator::syncAll();
+    xvtxRangePop();
+
 
     int self = getLocalRank();
     auto ownerPtr = owners.data();
@@ -35,9 +41,8 @@ void generateOwnedNonOwned(ManVec<int> &owners, ManVec<T> &ownedIndexes, ManVec<
     size_t numOwned = std::distance(allIndexes.begin(), partPoint);
     size_t numNonOwned = count - numOwned;
 
-    ownedIndexes.resize(numOwned);
-    nonOwnedIndexes.resize(numNonOwned);
-    Iterator::syncAll();
+    ownedIndexes.resize(numOwned, false);
+    nonOwnedIndexes.resize(numNonOwned, false);
 
     auto ownedIndexesPtr = ownedIndexes.data();
     auto nonOwnedIndexesPtr = nonOwnedIndexes.data();
@@ -49,5 +54,7 @@ void generateOwnedNonOwned(ManVec<int> &owners, ManVec<T> &ownedIndexes, ManVec<
         nonOwnedIndexesPtr[i] = allIndexesPtr[numOwned + i];
     }, numNonOwned);
     Iterator::syncAll();
+
+    xvtxRangePop();
 }
 #endif //PHELL_OWNEDLISTGEN_H

@@ -1,9 +1,9 @@
 //
-// Created by robertse on 20/05/23.
+// Created by Fredrik Robertsen on 15/11/25.
 //
 
-#ifndef PHELL_INPUTMESH_H
-#define PHELL_INPUTMESH_H
+#ifndef PHELL_MESH_H
+#define PHELL_MESH_H
 
 #include "InputGeometry.h"
 #include "../MeshData.h"
@@ -13,7 +13,8 @@
 
 #include "../Util/MPIHelpers.h"
 
-class InputMesh : public InputGeometry {
+
+class Mesh : public InputGeometry {
 
 public:
     int meshId;
@@ -21,20 +22,24 @@ public:
     MeshData *dataPtr;
     MeshAccel *accel;
 
-    lpReal_t shellScale = 1;
-    lpReal_t cellSizeScale = 1;
-    lpReal_t rangeFactor = 1;
 
-    InputMesh() {
+    Mesh() {
 
     }
 
-    ~InputMesh() {
+    ~Mesh() {
         //
     }
 
     virtual void setOffset(Real3 offset) override{
-
+        this->offset = offset;
+        for (int i = dataPtr->meshStarts[meshId]; i < dataPtr->meshEnds[meshId]; i++) {
+            for (int j = 0; j < 3; j++) {
+                dataPtr->xVtxCord[i * 3 + j] -= offset.x;
+                dataPtr->yVtxCord[i * 3 + j] -= offset.y;
+                dataPtr->zVtxCord[i * 3 + j] -= offset.z;
+            }
+        }
     }
 
     virtual auto getLimits() -> std::tuple<Real3, Real3> override {
@@ -56,9 +61,9 @@ public:
         return std::tuple<Real3, Real3>(min, max);
     }
 
+    // maybe should be pure virtual
     virtual bool withinGeometry(Real3 cord, lpReal_t radius) override {
-        //std::cout << "." << std::endl;
-        return accel->withinGeometry(cord, radius * shellScale,
+        return accel->withinGeometry(cord,
                                      dataPtr->getXVtxPtr(meshId),
                                      dataPtr->getYVtxPtr(meshId),
                                      dataPtr->getZVtxPtr(meshId),
@@ -81,50 +86,16 @@ public:
     }
 
     // with scale from the mesh
-    void generateAccel(lpReal_t radius){
+    // maybe should be pure virtual
+    virtual void generateAccel(lpReal_t radius){
 
-        accel->generateAccel(radius*cellSizeScale, radius*rangeFactor,
+        accel->generateAccel(std::max(radius, radius), std::max(radius, radius),
                              dataPtr->getXVtxPtr(meshId),
                              dataPtr->getYVtxPtr(meshId),
                              dataPtr->getZVtxPtr(meshId),
                              dataPtr->getMeshSize(meshId));
     }
 
-    // set absolute values
-    void generateAccel(lpReal_t cellSize, lpReal_t searchDistance){
-        accel->generateAccel(cellSize, searchDistance,
-                             dataPtr->getXVtxPtr(meshId),
-                             dataPtr->getYVtxPtr(meshId),
-                             dataPtr->getZVtxPtr(meshId),
-                             dataPtr->getMeshSize(meshId));
-    }
-
-    DEVCALLABLE
-    void addForce(int tri, lpReal_t xForce,lpReal_t yForce,lpReal_t zForce){
-        //
-        Atomic::atomicAddVal(dataPtr->xFaceForce[tri], xForce);
-        Atomic::atomicAddVal(dataPtr->yFaceForce[tri], yForce);
-        Atomic::atomicAddVal(dataPtr->zFaceForce[tri], zForce);
-    }
-
-    void zeroForce(){
-        int start = dataPtr->meshStarts[meshId];
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE(int i, MeshData &mesh) {
-            mesh.xFaceForce[start+i] = 0;
-            mesh.yFaceForce[start+i] = 0;
-            mesh.zFaceForce[start+i] = 0;
-        }, dataPtr->getMeshSize(meshId), *dataPtr);
-        Iterator::syncAll();
-    }
-
-    void reduceForces() {
-        // mpi reduce for forces
-        int size = dataPtr->getMeshSize(meshId);
-        int start = dataPtr->meshStarts[meshId];
-        MPI_Allreduce(MPI_IN_PLACE, &dataPtr->xFaceForce[start], size, getMPIType<lpReal_t>(), MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(MPI_IN_PLACE, &dataPtr->yFaceForce[start], size, getMPIType<lpReal_t>(), MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(MPI_IN_PLACE, &dataPtr->zFaceForce[start], size, getMPIType<lpReal_t>(), MPI_SUM, MPI_COMM_WORLD);
-    }
 };
 
-#endif //PHELL_INPUTMESH_H
+#endif //PHELL_MESH_H

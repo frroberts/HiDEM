@@ -13,7 +13,10 @@
 #include "ParallelListGen.h"
 
 template<class UserData>
-class LinkDataHandler : public UserData {
+class LinkDataHandler : public UserData { 
+    ManVec<uint8_t, ScratchAllocator<uint8_t>> scratchSpace;
+    ManVec<lInd_t> reorderOrder;
+
 public:
     void dropLinks(ManVec<lInd_t> &droppedLocalIndexes) {
         //nvtxRangePush("dropLinks links");
@@ -46,7 +49,7 @@ public:
     }
 
     void dropUnusedLinks(GlobalLocalMapper<gKey_t, pInd_t> &pMapper) {
-        //nvtxRangePush("dropUnusedLinks links");
+        xvtxRangePush("dropUnusedLinks links");
         ManVec<lInd_t> toBeDropped;
         for (size_t i = 0; i < this->numLocal; ++i) {
             ind_t pIndA = pMapper.getLocalInd(this->globalKeyEndA[i]);
@@ -55,12 +58,12 @@ public:
                 toBeDropped.push_back(i);
         }
         dropLinks(toBeDropped);
-        //nvtxRangePop();
+        xvtxRangePop();
     }
 
     void dropBrokenLinks() {
+        xvtxRangePush("dropBrokenLinks links");
         /*
-        //nvtxRangePush("dropBrokenLinks links");
         ManVec<lInd_t> toBeDropped;
         toBeDropped.resize(this->numLocal);
         auto ptr = toBeDropped.data();
@@ -80,18 +83,45 @@ public:
             return statePtr[ind] == 0;
         });
         dropLinks(toBeDropped);
-        //nvtxRangePop();
+        xvtxRangePop();
     }
 
     void dropBrokenNonOwnedLinks() {
+        xvtxRangePush("drop non owned and broken");
+        // port this to the rest of the drop flagged links
+
         int self = getLocalRank();
         auto statePtr = this->state.data();
         auto ownerPtrs = this->owners.data();
-        auto toBeDropped = listGenPredicate<lInd_t>(this->numLocal, [=] DEVCALLABLE (int ind) {
-            return statePtr[ind] == 0 || ownerPtrs[ind] != self;
+
+        ManVec<lInd_t> newLinkOrder = listGenSeq<lInd_t>(this->numLocal);
+
+        auto point = stx::stable_partition(EXECPOLICY newLinkOrder.begin(), newLinkOrder.end(), [=] DEVCALLABLE (int ind) {
+            return (statePtr[ind] != 0 && ownerPtrs[ind] == self);
         });
-        dropLinks(toBeDropped);
-        //nvtxRangePop();
+        int toKeep = std::distance(newLinkOrder.begin(), point);
+
+        ManVec<lInd_t> newSideOrder;
+        newSideOrder.resize(this->numLocal * 2);
+
+        auto newSideOrderPtr = newSideOrder.data();
+        auto newLinkOrderPtr = newLinkOrder.data();
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (ind_t i, LinkDataHandler<UserData> &lData) {
+            auto lInd = newLinkOrderPtr[i];
+            newSideOrderPtr[(i * 2) + 0] = lData.sideIndEndA[lInd];
+            newSideOrderPtr[(i * 2) + 1] = lData.sideIndEndB[lInd];
+        }, this->numLocal, *this);
+        Iterator::syncAll();
+
+        reorder(newLinkOrder);
+
+        reorderSideData(newSideOrder);
+
+        resizeSideData(toKeep*2);
+        resize(toKeep);
+        this->generateOwnedLinksList();
+
+        xvtxRangePop();
     }
 
     void resize(size_t newSize) {
@@ -125,18 +155,18 @@ public:
 
     void reorder(ManVec<lInd_t> &newOrder) {
         // odd types
-        //nvtxRangePush("reorder links");
+        xvtxRangePush("reorder links");
 
-        callForTupleElem(this->getFieldTupleInput(), [&](auto vecPTr) {
-            reorderDevVec(*vecPTr, newOrder);
+        callForTupleElem(this->getFieldTupleInput(), [&](auto vecPtr) {
+            reorderDevVecScratch(*vecPtr, newOrder, scratchSpace);
         });
         // particleLinkIds,
-        callForTupleElem(this->getFieldTupleGenerated(), [&](auto vecPTr) {
-            reorderDevVec(*vecPTr, newOrder);
+        callForTupleElem(this->getFieldTupleGenerated(), [&](auto vecPtr) {
+            reorderDevVecScratch(*vecPtr, newOrder, scratchSpace);
         });
 
         this->generateOwnedLinksList();
-        //nvtxRangePop();
+        xvtxRangePop();
     }
 
 
@@ -147,14 +177,14 @@ public:
 
     void reorderSideData(ManVec<lInd_t> &newOrder) {
         //
-        //nvtxRangePush("reorderCT link");
+        xvtxRangePush("reorderCT link");
 
-        callForTupleElem(this->getFieldTupleSideInput(), [&](auto vecPTr) {
-            reorderDevVec(*vecPTr, newOrder);
+        callForTupleElem(this->getFieldTupleSideInput(), [&](auto vecPtr) {
+            reorderDevVecScratch(*vecPtr, newOrder, scratchSpace);
         });
 
         this->reindexSideData(newOrder);
-        //nvtxRangePop();
+        xvtxRangePop();
     }
 
     void resizeSideData(size_t newSize) {
@@ -164,7 +194,7 @@ public:
     }
 
     void dropSideData(ManVec<lInd_t> &droppedSideInd) {
-        //nvtxRangePush("dropCT link");
+        xvtxRangePush("dropCT link");
         // dropped reorder needs to replace elements in the back of it to work, not just leave to old ones there
         // the reversed lookup for the new order/indexing does not work if its not
         ManVec<lInd_t> newOrder;
@@ -172,7 +202,7 @@ public:
         size_t newSize = (this->numLocal * 2) - droppedSideInd.size();
         reorderSideData(newOrder);
         resizeSideData(newSize);
-        //nvtxRangePop();
+        xvtxRangePop();
     }
 
 

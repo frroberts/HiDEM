@@ -6,7 +6,7 @@
 
 #include "GeometryCollection.h"
 #include "CompoundInput.h"
-#include "InputMesh.h"
+#include "BoundingMesh.h"
 
 
 std::shared_ptr<InputGeometry> GeometryCollection::generateCompound(std::string inputStr) {
@@ -111,31 +111,33 @@ std::shared_ptr<InputDEM> GeometryCollection::createDem(Map2d<lpReal_t>* base, M
     return geom;
 }
 
-std::shared_ptr<InputMesh>
-GeometryCollection::createMesh(std::string name, std::string objPath, Real3 scale, Real3 position,
-                               lpReal_t shellScale, MeshData *meshData) {
-    auto geom = std::make_shared<InputMesh>();
+void GeometryCollection::fillMesh(Mesh* geom, std::string name, std::string objPath, Real3 scale, Real3 position,
+                                  MeshData *meshData, bool flipNormal) {
 
     auto triangles = MeshLoader::loadObj(objPath);
 
+    // Validate mesh, check that it is airtight
+
 
     for (auto &t: triangles) {
+        t.autoNormal();
+        if (flipNormal)
+            t.normal = t.normal * Real3(-1);
         for (auto &p: t.points) {
             p = p * scale;
             p = p + position;
         }
     }
 
-    geom->cellSizeScale = meshCellSizeScale;
-    geom->rangeFactor = meshRangeFactor;
+    //geom->cellSizeScale = meshCellSizeScale;
+    //geom->rangeFactor = meshRangeFactor;
+    // geom->outerShell = outerShell;
 
     geom->meshId = meshData->addMesh(triangles, name);
-    geom->shellScale = shellScale;
+    // geom->shellScale = shellScale;
 
     geom->dataPtr = meshData;
     geom->accel = new MeshAccel();
-
-    return geom;
 
 }
 
@@ -161,7 +163,7 @@ void GeometryCollection::buildFromConfig(ArgParser &parser) {
     // for each entry in [[geometry]] parse it and generate it
     //int numGeometry = tomlTable["geometry"].as_array()->size();
     const auto geometryTable = toml::find<std::vector<toml::table>>(parser.table, "geometry");
-    parseGeometryTable(geometryTable, boundingMeshes, geometryMeshData);
+    parseGeometryTable(geometryTable);
 
     // these get defaulted if you dont specify it, not the best
     meshCellSizeScale = parser.getArg<double>("collisionMeshParameters.cellSizeScale").value_or(4.0);
@@ -171,14 +173,19 @@ void GeometryCollection::buildFromConfig(ArgParser &parser) {
         // build base geometries
 
         const std::vector<toml::table> collisionGeomTable = toml::find<std::vector<toml::table>>(parser.table, "collisionGeometry");
-        parseGeometryTable(collisionGeomTable, collisionMeshes, collisionMeshData);
+        parseCollisionTable(collisionGeomTable);
     }
 
     // generate mesh acceleration structs
 }
 
-void GeometryCollection::parseGeometryTable(std::vector<toml::table> geometryTable,
-                                            std::map<std::string, std::shared_ptr<InputMesh>> &meshes, MeshData *meshData) {
+void GeometryCollection::setOffset(Real3 offset) {
+    for (auto&t: allGeometries) {
+        t.second->setOffset(offset);
+    }
+}
+
+void GeometryCollection::parseGeometryTable(std::vector<toml::table> geometryTable) {
     for(toml::value tomlBase: geometryTable){
 
         std::string type{ toml::find<std::string>(tomlBase, "type") };//*tomlBase["type"].as_string()};
@@ -204,10 +211,20 @@ void GeometryCollection::parseGeometryTable(std::vector<toml::table> geometryTab
             Real3 scale = TomlParser::getReal3Opt(tomlBase, "scale", {1});
             Real3 pos = TomlParser::getReal3Opt(tomlBase, "position", {0});
             lpReal_t shellScale = toml::find<float>(tomlBase, "shellScale");
+            bool outerShell = true;
+            if (shellScale < 0) {
+                shellScale = abs(shellScale);
+                outerShell = false;
+            }
+            std::shared_ptr<BoundingMesh> geom = std::make_shared<BoundingMesh>();
 
-            auto geom = createMesh(name, path, scale, pos, shellScale, meshData);
+            fillMesh(geom.get(), name, path, scale, pos, geometryMeshData, false);
+
+            geom->outerShell = outerShell;
+            geom->shellScale = shellScale;
+
             allGeometries[name] = geom;
-            meshes[name] = geom;
+            boundingMeshes[name] = geom;
         } else if (type == "plane") {
             //
         } else if (type == "bed") {
@@ -225,6 +242,57 @@ void GeometryCollection::parseGeometryTable(std::vector<toml::table> geometryTab
     }
 }
 
+
+
+void GeometryCollection::parseCollisionTable(std::vector<toml::table> geometryTable) {
+    for(toml::value tomlBase: geometryTable){
+
+        std::string type{ toml::find<std::string>(tomlBase, "type") };//*tomlBase["type"].as_string()};
+        std::string name{ toml::find<std::string>(tomlBase, "name") };//*tomlBase["name"].as_string()};
+        
+        if (type == "mesh") {
+            //
+            std::string path{toml::find<std::string>(tomlBase, "path") };//*tomlBase["path"].as_string()};
+            Real3 scale = TomlParser::getReal3Opt(tomlBase, "scale", {1});
+            Real3 pos = TomlParser::getReal3Opt(tomlBase, "position", {0});
+            lpReal_t shellScale = toml::find_or<float>(tomlBase, "shellScale", 0.f);
+            // needs to be optional
+            bool flipNormal = toml::find_or<bool>(tomlBase, "flipNormal", false);
+            std::cout << path << " " << flipNormal << std::endl;
+            bool outerShell = true;
+            if (shellScale < 0) {
+                shellScale = abs(shellScale);
+                outerShell = false;
+            }
+
+            std::shared_ptr<BoundingMesh> boundingGeom = std::make_shared<BoundingMesh>();
+            std::shared_ptr<CollisionMesh> collisionGeom = std::make_shared<CollisionMesh>();
+
+            fillMesh(boundingGeom.get(), name, path, scale, pos, geometryMeshData, false);
+            fillMesh(collisionGeom.get(), name, path, scale, pos, collisionMeshData, flipNormal);
+            boundingGeom->outerShell = outerShell;
+            boundingGeom->shellScale = shellScale;
+
+            allGeometries[name] = boundingGeom;
+            boundingMeshes[name] = boundingGeom;
+            collisionMeshes[name] = collisionGeom;
+        } else if (type == "plane") {
+            //
+        } else if (type == "bed") {
+            std::string path{toml::find<std::string>(tomlBase, "path") };//*tomlBase["path"].as_string()};
+            addMapLoader(path);
+            auto friction = mapLoaders[path].get<lpReal_t>(toml::find<int>(tomlBase, "frictionFieldID"));//tomlBase["frictionFieldID"].value<>().value());
+            auto bottom = mapLoaders[path].get<lpReal_t>(toml::find<int>(tomlBase, "baseFieldID"));//tomlBase["baseFieldID"].value<>().value());
+            auto geom = createBed(bottom, friction);
+            allGeometries[name] = geom;
+            bed = geom;
+        } else {
+            std::cout << "unknown collision geometry type" << std::endl;
+            exit(1);
+        }
+    }
+}
+
 // to not load the same map multiple times
 void GeometryCollection::addMapLoader(std::string path) {
 
@@ -237,11 +305,15 @@ void GeometryCollection::addMapLoader(std::string path) {
 }
 
 void GeometryCollection::generatedAllAccel(lpReal_t maxRadius){
+    /*
     for (auto p: collisionMeshes){
-        p.second->generateAccel(maxRadius*meshCellSizeScale, maxRadius*p.second->shellScale);
+        p.second->generateAccel(maxRadius);
+        p.second->accel->flattenZ();
     }
+    */
     for (auto p: boundingMeshes){
-        p.second->generateAccel(maxRadius*meshCellSizeScale, maxRadius*p.second->shellScale);
+        p.second->generateAccel(maxRadius);
+        p.second->accel->flattenZ();
     }
 }
 

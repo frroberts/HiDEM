@@ -158,7 +158,7 @@ The perforamnce of the redistribution step is however not ideal, the time taken 
 
 The graph below shows scalability for different cases on LUMI running on the GPU partition, each node has effectively 8 GPUs, as each of the MI250x GPUs show up as two, so a full node runs 8 ranks. The number of particles used by each case is shown in the figure legend.
 
-![](GPU_scaling.png "LUMI GPU scaling")
+![](Images/GPU_scaling.png "LUMI GPU scaling")
 
 ## Performance stability
 

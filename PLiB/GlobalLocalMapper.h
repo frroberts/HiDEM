@@ -265,6 +265,7 @@ public:
 
     void bulkGetLocal(ManVec<gType> &gKeys, ManVec<lType> &lKeys, int lKeyStart) {
 
+        xvtxRangePush("bulkGetLocal");
         auto gKeyPtr  = gKeys.data();
         auto lKeyPtr  = lKeys.data();
 
@@ -276,6 +277,7 @@ public:
         }, gKeys.size(), *this);
         // manually check last error here to catch miss mappings ?
         Iterator::syncAll();
+        xvtxRangePop();
     }
 
     void bulkCreate(ManVec<gKey_t> &gKeys) {

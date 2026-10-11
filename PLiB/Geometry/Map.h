@@ -17,7 +17,7 @@ public:
     Map(){
         //
     };
-
+    virtual void setOffset(float offsetX, float offsetY)  =  0;
     virtual T getVal(float x, float y, float z) {
         printf("dummy");
         return T();
@@ -32,6 +32,10 @@ public:
 
     }
     MapSingle() = default;
+    virtual void setOffset(float offsetX, float offsetY)
+    {
+        // not applicable but needs to be implemented
+    };
     virtual T getVal(float x, float y, float z) {
         return val;
     }

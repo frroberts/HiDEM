@@ -26,8 +26,9 @@ public:
     Real3 upperLimit;
 
     lpReal_t maxRadius;
-    Real3 offset = 0;
     bool zeroCenter = false;
+
+    Real3 offset;
 
     std::shared_ptr<ParticleGenerator> pGenPtr;
     LinkGenerator *lGen;
@@ -54,7 +55,17 @@ public:
     ManVec<ElementaryLink> generateLinks(ParticleData *pDataPtr);
 
     void setOffset(Real3 newOffset) {
+        lowerLimit = lowerLimit - newOffset;
+        upperLimit = upperLimit - newOffset;
         offset = newOffset;
+        // go over all the input geometries and offset them as well
+        for (auto &g : boundingGeometries) {
+            g->setOffset(newOffset);
+        }
+        for (auto &g : collisionGeometries) {
+            g->setOffset(newOffset);
+        }
+        // need to regenerate any bounding boxes as well...
     }
 
     void setup(ArgParser &parser, lpReal_t scale) {
@@ -64,6 +75,7 @@ public:
         breakLinkSeed = parser.getArg<int>("lattice.seed").value_or(1);
         breakLinkSeedOffset = parser.getArg<int>("lattice.seedOffset").value_or(1);
         linkGenScale = parser.getArg<double>("lattice.linkGenScale").value_or(1.2);
+
 
         geomCollection.buildFromConfig(parser);
 

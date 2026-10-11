@@ -29,15 +29,16 @@ namespace cubX = hipcub;
 
 template <typename T>
 void getDropReorder(ManVec<T> &droppedLocalIndexes, ManVec<T> &newOrder, size_t count) {
+    xvtxRangePush("gen drop reorder");
 
 #ifdef GPU
-    ManVec<char> flags;
-    flags.resize(count);
+    ManVec<char, ScratchAllocator<char>> flags;
+    flags.resize(count, false);
 
     auto flagPTr = flags.data();
-    ManVec<T> newOrderIn;
-    newOrder.resize(count);
-    newOrderIn.resize(count);
+    ManVec<T, ScratchAllocator<T>> newOrderIn;
+    newOrder.resize(count, false);
+    newOrderIn.resize(count, false);
     T *newOrderPtr = newOrder.data();
     T *newOrderInPtr = newOrderIn.data();
     T *droppedLocalIndexesPtr = droppedLocalIndexes.data();
@@ -97,6 +98,7 @@ void getDropReorder(ManVec<T> &droppedLocalIndexes, ManVec<T> &newOrder, size_t 
         std::swap(newOrder[indx] ,newOrder[last]);
     }
 #endif
+        xvtxRangePop();
 
 }
 

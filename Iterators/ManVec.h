@@ -51,6 +51,7 @@ class ManVec : public ManagedParent {
         T *ptrTemp = allocator.allocate(newCap);
 
         if (ptrTemp == nullptr) {
+            std::cout << "Failed to allocate memory for ManVec, requested cap: " << newCap << std::endl;
             throw std::bad_alloc();
         }
 

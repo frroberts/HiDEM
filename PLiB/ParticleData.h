@@ -104,6 +104,11 @@ public:
         auto [xMin, xMax] = stx::minmax_element(EXECPOLICY xCord.begin(), xCord.end());
         auto [yMin, yMax] = stx::minmax_element(EXECPOLICY yCord.begin(), yCord.end());
         auto [zMin, zMax] = stx::minmax_element(EXECPOLICY zCord.begin(), zCord.end());
+        if (xMin == xMax) {
+            std::cout << "Generating gird for empty data, exiting... " << std::endl;
+            exit(1);
+            return std::make_tuple(0,0,0,0,0,0);
+        }
 
         return std::make_tuple(*xMax, *yMax, *zMax, *xMin, *yMin, *zMin);
     }
@@ -112,9 +117,9 @@ public:
 
 
 
-        hpReal_t xMax = std::numeric_limits<hpReal_t>::min();
-        hpReal_t yMax = std::numeric_limits<hpReal_t>::min();
-        hpReal_t zMax = std::numeric_limits<hpReal_t>::min();
+        hpReal_t xMax = std::numeric_limits<hpReal_t>::lowest();
+        hpReal_t yMax = std::numeric_limits<hpReal_t>::lowest();
+        hpReal_t zMax = std::numeric_limits<hpReal_t>::lowest();
         hpReal_t xMin = std::numeric_limits<hpReal_t>::max();
         hpReal_t yMin = std::numeric_limits<hpReal_t>::max();
         hpReal_t zMin = std::numeric_limits<hpReal_t>::max();
@@ -142,7 +147,7 @@ public:
     }
 
     void remap(GlobalLocalMapper<gKey_t, pInd_t> &mapper) {
-        //nvtxRangePush("ParticleData remap");
+        //xvtxRangePush("ParticleData remap");
         auto start = std::chrono::steady_clock::now();
         int self = 0;
         MPI_Comm_rank(MPI_COMM_WORLD, &self);
@@ -157,7 +162,7 @@ public:
         auto end = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed_seconds = end - start;
         //std::cout << globalKeys.size() << " elapsed time part: " << elapsed_seconds.count() << "s\n";
-        //nvtxRangePop();
+        //xvtxRangePop();
     }
 
     void generateOnwedList() {

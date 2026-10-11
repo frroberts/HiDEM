@@ -13,11 +13,14 @@
 
 #include <filesystem>
 
+#include "Util/GPUSelect.h"
+
 int main(int argc, char *argv[]) {
 
     ArgParser arguments(argc, argv);
 
     MPI_Init(&argc, &argv);
+    selectDevice();
 
     lpReal_t breakTime = arguments.getArg<lpReal_t >("general.breakTime").value_or(10.0);
     lpReal_t dt = arguments.getArg<lpReal_t >("general.dt").value_or(0.0001);
@@ -52,6 +55,9 @@ int main(int argc, char *argv[]) {
     lpReal_t maxLoad = arguments.getArg<lpReal_t>("general.maxLoad").value_or(0.35);
     lpReal_t bendBreak = arguments.getArg<lpReal_t>("general.bendBreak").value_or(0.35);
 
+    lpReal_t meshDrag = arguments.getArg<lpReal_t>("general.meshDrag").value_or(1000.0);
+    lpReal_t meshForce = arguments.getArg<lpReal_t>("general.meshForce").value_or(10000000.0);
+    lpReal_t meshInteract = arguments.getArg<lpReal_t>("general.meshInteract").value_or(1.0);
 
     // ------------------------------------------------
     //           Set up anything related to HiDEMLib
@@ -99,11 +105,13 @@ int main(int argc, char *argv[]) {
 
     ExternalForces *extForcePtr = hiDem.getExternalForcePtr();
 
-    //InputMesh* mesh = hiDem.getCollisionMeshPtr();
+    CollisionMesh* mesh = hiDem.getCollisionMeshPtr();
 
-    //mesh->generateAccel(hiDem.maxRadius*2);
+    mesh->generateAccel(hiDem.geometry.maxRadius*4);
 
     auto bed = hiDem.getBedPtrs();
+
+	bed->toVTKHDF("bed.vtkhdf");
 
     // ------------------------------------------------
     //           Simulation variables
@@ -188,7 +196,7 @@ int main(int argc, char *argv[]) {
             };
 
     auto linkForceFunc =
-            [=] DEVCALLABLE REALT_TEMPL(
+            [=] DEVCALLABLE REALT_TEMPL (
                     lpReal_t &mask,
                     const lpReal_t &xDist, const lpReal_t &yDist, const lpReal_t &zDist,
 
@@ -221,9 +229,7 @@ int main(int argc, char *argv[]) {
                 lpReal_t LP = sqrt(xDist2 + yDist2);
                 lpReal_t invLI = lpReal_t(1.0) / LI;
                 lpReal_t invLP = lpReal_t(1.0) / LP;
-                lpReal_t invLILP = lpReal_t(1.0) / (LI * LP); // invLI * invLP;//
-
-                // todo consider reshuffling
+                lpReal_t invLILP = lpReal_t(1.0) / (LI * LP);
 
                 lpReal_t T00 = xDist * invLI;
                 lpReal_t T01 = yDist * invLI;
@@ -286,7 +292,7 @@ int main(int argc, char *argv[]) {
             };
 
     auto breakLinks = [=]
-            DEVCALLABLE(
+            DEVCALLABLE REALT_TEMPL (
         const hpReal_t &xCord1, const hpReal_t &yCord1, const hpReal_t &zCord1,
         const lpReal_t &xTheta1, const lpReal_t &yTheta1, const lpReal_t &zTheta1,
         const hpReal_t &xCord2, const hpReal_t &yCord2, const hpReal_t &zCord2,
@@ -322,9 +328,9 @@ int main(int argc, char *argv[]) {
         hpReal_t zCord = pData.zCord[pInd];
 
         // we can technically get rid of prev, it can be recomputed from diff
-        hpReal_t xCordPrev;// = pData.xCordPrev[pInd];
-        hpReal_t yCordPrev;// = pData.yCordPrev[pInd];
-        hpReal_t zCordPrev;// = pData.zCordPrev[pInd];
+        hpReal_t xCordPrev;
+        hpReal_t yCordPrev;
+        hpReal_t zCordPrev;
 
         lpReal_t xDiff = pData.xDiff[pInd];;
         lpReal_t yDiff = pData.yDiff[pInd];;
@@ -333,9 +339,9 @@ int main(int argc, char *argv[]) {
         lpReal_t xTheta = pData.xTheta[pInd];
         lpReal_t yTheta = pData.yTheta[pInd];
         lpReal_t zTheta = pData.zTheta[pInd];
-        lpReal_t xThetaPrev;// = pData.xThetaPrev[pInd];
-        lpReal_t yThetaPrev;// = pData.yThetaPrev[pInd];
-        lpReal_t zThetaPrev;// = pData.zThetaPrev[pInd];
+        lpReal_t xThetaPrev;
+        lpReal_t yThetaPrev;
+        lpReal_t zThetaPrev;
 
         lpReal_t uDiff = pData.uDiff[pInd];;
         lpReal_t vDiff = pData.vDiff[pInd];;
@@ -344,12 +350,12 @@ int main(int argc, char *argv[]) {
         lpReal_t radius = pData.radius[pInd];
         lpReal_t diameter = radius * lpReal_t(2.0);
 
-        lpReal_t bedzCord = -100;//bed->getHeight(xCord, yCord);
+        lpReal_t bedzCord = bed->getHeight(xCord, yCord);
 
         // Set dragcoeffcients
         lpReal_t dragCoeff;
         if ((zCord + radius) - bedzCord < bedInteract) { // should be - radius ?
-            dragCoeff = waterDrag;//std::min(bedDrag * bed->getFric(xCord, yCord), lpReal_t(1e+5) * scale * scale);
+            dragCoeff = std::min(bedDrag * bed->getFric(xCord, yCord), lpReal_t(1e+5) * scale * scale);
         } else if (zCord > waterLevel) {
             dragCoeff = airDrag;
         } else {
@@ -361,21 +367,6 @@ int main(int argc, char *argv[]) {
         lpReal_t uForce = pData.uForce[pInd];
         lpReal_t vForce = pData.vForce[pInd];
         lpReal_t wForce = pData.wForce[pInd];
-
-/*
-        mesh->closestTriFun(xCord,yCord, zCord, bedInteract, pData.tag, pInd, [&] (int tri, lpReal_t dist){
-
-            lpReal_t xForceCol = -mesh->dataPtr->xNorm[tri] * (bedStiffness * (-dist + bedInteract));
-            lpReal_t yForceCol = -mesh->dataPtr->yNorm[tri] * (bedStiffness * (-dist + bedInteract));
-            lpReal_t zForceCol = -mesh->dataPtr->zNorm[tri] * (bedStiffness * (-dist + bedInteract));
-
-            mesh->addForce(tri, xForceCol, yForceCol, zForceCol);
-
-            xForce += xForceCol;
-            yForce += yForceCol;
-            zForce += zForceCol;
-        });
-*/
 
         lpReal_t particleMass = rhoIce * diameter * diameter * diameter;
         lpReal_t particleMomentInertia = particleMass * diameter * diameter / lpReal_t(6.0);
@@ -393,9 +384,28 @@ int main(int argc, char *argv[]) {
             zForce += bedStiffness * (bedzCord - (zCord + radius));
         }
 
+        mesh->closestTriFun(xCord,yCord, zCord, bedInteract+pData.radius[pInd], pInd, [&] (int tri, lpReal_t dist){
+            float maxDist = bedInteract+pData.radius[pInd];
+            dist = sqrt(dist);
+
+            dragCoeff = meshDrag * ((maxDist-dist));
+
+
+            lpReal_t xForceCol = - mesh->dataPtr->xNorm[tri] * (maxDist-dist) * meshForce;
+            lpReal_t yForceCol = - mesh->dataPtr->yNorm[tri] * (maxDist-dist) * meshForce;
+            lpReal_t zForceCol = - mesh->dataPtr->zNorm[tri] * (maxDist-dist) * meshForce;
+
+            mesh->addForceToFace(tri, xForceCol, yForceCol, zForceCol);
+
+            xForce += xForceCol;
+            yForce += yForceCol;
+            zForce += zForceCol;
+
+            // pData.flag[pInd] = dragCoeff;
+        });
+
         // Additional force components
-        if(xCord < -1200)
-            xForce += extForcePtr->xForce->interp(xCord, yCord);
+        xForce += extForcePtr->xForce->interp(xCord, yCord);
         yForce += extForcePtr->yForce->interp(xCord, yCord);
         zForce += extForcePtr->zForce->interp(xCord, yCord);
         uForce += extForcePtr->uForce->interp(xCord, yCord);
@@ -513,16 +523,16 @@ int main(int argc, char *argv[]) {
         pData.wDiff[pInd] = zTheta - zThetaPrev;
     };
 
-
     // ------------------------------------------------
     //           Iteration loop
     // ------------------------------------------------
 
-    devProfilerStart();
 
     MPI_Barrier(MPI_COMM_WORLD);
 
     auto iterStart = std::chrono::steady_clock::now();
+
+    mesh->accel->toVTKHDF("meshAccel.vtkhdf");
 
     while (hiDem.run()) {
 
@@ -540,14 +550,18 @@ int main(int argc, char *argv[]) {
                                     packVecPtrs(pData.iteratedNeighbours, pData.iteratedLinks, pData.owners));
 
             hiDem.snapshotLinks(std::make_tuple(
-                                        "state", "keyEndA", "keyEndB", "globalKey"),
-                                packVecPtrs(lData.state, lData.globalKeyEndA, lData.globalKeyEndA,
+                                    "state", "keyEndA", "keyEndB", "globalKey"),
+                                packVecPtrs(lData.state, lData.globalKeyEndA, lData.globalKeyEndB,
                                             lData.globalKeys));
+            hiDem.snapshotMesh(std::make_tuple(
+                                   "xFaceForce", "yFaceForce", "zFaceForce"),
+                               packVecsDataPtrs(mesh->dataPtr->xFaceForce, mesh->dataPtr->yFaceForce,
+                                                mesh->dataPtr->zFaceForce));
         }
 
         hiDem.gridService();
+    devProfilerStart();
 
-        auto range = xvtxRangeStart("loop");
         RangeV2 r("timestep", 1);
 
         hiDem.computePartForce(neighbourForceFunc, linkForceFunc,
@@ -561,6 +575,7 @@ int main(int argc, char *argv[]) {
 
         hiDem.applyForce(applyForce);
 
+
         if (hiDem.getCurrentTimestep() * dt > breakTime) {
             hiDem.linkUpdate(breakLinks,
                              packVecPtrs(pData.xCord, pData.yCord, pData.zCord,
@@ -570,11 +585,10 @@ int main(int argc, char *argv[]) {
         }
 
         hiDem.finalizeTs();
-        xvtxRangeEnd(range);
+    devProfilerStop();
 
     }
 
-    devProfilerStop();
 
     auto iterEnd = std::chrono::steady_clock::now();
     std::chrono::duration<double> elapsedIter = iterEnd - iterStart;

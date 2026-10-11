@@ -9,8 +9,10 @@
 
 #include "NeighbourGrid.h"
 #include "../Iterators/Iterator.h"
+#include "Logger/Logger.h"
 
 #include "Util/Util.h"
+#include "Global.h"
 
 #ifdef GPU
 #include "DevPortabilityLayer.h"
@@ -68,16 +70,18 @@ void NeighbourGrid::generateNeighbourGrid(ParticleData &data)
     yGridSize = _yGridSize;
     zGridSize = _zGridSize;
 
+    int prevTotalCells = totalCells;
     totalCells = xGridSize*yGridSize*zGridSize;
+    if ((prevTotalCells != 0) && ((totalCells/10) > prevTotalCells)) {
+        std::cout << getLocalRank() << " new (" << totalCells << ") grid 10x larger than old (" << prevTotalCells << ") , did something explode ?" << std::endl;
+    }
     // if we get an empty domain set num cells to 0 to avoid crashing
     if(data.numLocal == 0)
         totalCells = 0;
     //std::cout << _xGridSize << " " << _yGridSize << " " << _zGridSize << " " << totalCells << std::endl;
 
-    targetBuckets.clear();
-
-    targetBuckets.resize(totalCells*27);
-    numTargetBuckets.resize(totalCells);
+    targetBuckets.resize(totalCells*27, false);
+    numTargetBuckets.resize(totalCells, false);
 
 
     Iterator::iterate3D(OffloadExec(), [] DEVCALLABLE (int x, int y, int z, NeighbourGrid &grid) {
@@ -115,9 +119,9 @@ void NeighbourGrid::colourParticles(ParticleData &data)
 {
     //
 
-    colours.resize(data.numLocal);
-    bucketSizes.resize(totalCells);
-    bucketStarts.resize(totalCells);
+    colours.resize(data.numLocal, false);
+    bucketSizes.resize(totalCells, false);
+    bucketStarts.resize(totalCells, false);
 
     data.iterateAllParticles(OffloadExec(), [] DEVCALLABLE (pInd_t pInd, ParticleData &data, NeighbourGrid &grid) {
 
@@ -150,7 +154,9 @@ void NeighbourGrid::colourParticles(ParticleData &data)
 
 void NeighbourGrid::generateIterationList(ParticleData &data)
 {
-    iterationOrder.resize(data.numLocal);
+        xvtxRangePush("generateIterationList");
+
+    iterationOrder.resize(data.numLocal, false);
     data.iterateAllParticles(OffloadExec(), []DEVCALLABLE(pInd_t pInd, ParticleData &data, NeighbourGrid &grid) {
         grid.iterationOrder[pInd] = pInd;
     }, data, *this);
@@ -160,11 +166,13 @@ void NeighbourGrid::generateIterationList(ParticleData &data)
     // todo add parallel stl here once its properly available
     // todo does not really need to be sort, more a histogram of values and i know the bucket sizes
     // look at how the renderer does it
-    ParallelSort::sortIndirect(iterationOrder, colours);
+    auto keyPtr = colours.data();
+    stx::sort(EXECPOLICY iterationOrder.begin(), iterationOrder.end(),
+        [=] DEVCALLABLE (int a, int b) { return keyPtr[a] < keyPtr[b]; });
 
     // set up the collected iteration orders here
-    bucketSizesColor.resize(totalCells);
-    bucketStartsColor.resize(totalCells);
+    bucketSizesColor.resize(totalCells, false);
+    bucketStartsColor.resize(totalCells, false);
 
     Iterator::iterate(OffloadExec(),[] DEVCALLABLE (ind_t cell, NeighbourGrid &grid){
         int particlesInColor = 0;
@@ -178,12 +186,14 @@ void NeighbourGrid::generateIterationList(ParticleData &data)
         grid.bucketSizesColor[cell] = particlesInColor;
         }, totalCells, *this);
     Iterator::syncAll();
+    xvtxRangePush("a");
 
     size_t sum = reducer.sum(bucketSizesColor);
 
-    ParallelScan::exclusive(bucketSizesColor, bucketStartsColor);
+    stx::exclusive_scan(EXECPOLICY bucketSizesColor.begin(), bucketSizesColor.end(), bucketStartsColor.begin(), 0);
 
-    iterationOrderPerColor.resize(sum);
+    iterationOrderPerColor.resize(sum, false);
+    xvtxRangePop();
 
 
     Iterator::iterate(OffloadExec(),[] DEVCALLABLE (ind_t cell, NeighbourGrid &grid){
@@ -202,6 +212,8 @@ void NeighbourGrid::generateIterationList(ParticleData &data)
         }
     },totalCells, *this);
     Iterator::syncAll();
+        xvtxRangePop();
+
 }
 
 void NeighbourGrid::reoder(ManVec<pInd_t> &order){

@@ -29,7 +29,7 @@ xBoundaryMax = false
 yBoundaryMax = false
 
 # DT
-dt = 0.0002
+dt = 0.002
 # when to allow link breaking to start, in simulated time
 breakTime = 5.0
 
@@ -37,7 +37,7 @@ breakTime = 5.0
 # number of iterations to run
 timeSteps = 600000
 # interval of how often to output
-outputInterval = 5000
+outputInterval = 1000
 
 [output]
 # path to work from
@@ -102,6 +102,10 @@ type = "FCC"
 particleRadius = 0.5
 fccSpacing = 1.41421
 linkGenScale = 1.2
+# XYZ rotation in radians
+fccRotation = [0,0,0]
+
+originCoordinate = [0,0,300]
 
 # seed for random generation
 seed = 1
@@ -114,13 +118,19 @@ zeroCenter = false
 [world]
 # limit geometry generation to this XYZ box
 # these are optional, and if left out the geometry will be based on the geometry limits
-
+xInputUpper = 1000.0
+yInputUpper = 1000.0
+zInputUpper = 400.0
+xInputLower = -1000.0
+yInputLower = -1000.0
+zInputLower = 0.0
 
 [[iceParameters]]
 # glacier
 linkGenerateProbability = 1.0
 boundingGeometry = "block"
-linkWith = [0]
+linkWith = [0,1,2,3,4,5,6,7,8,9,10]
+
 
 [collisionMeshParameters]
 # particle radius (max, scaled) * cellSizeScale = cellSize
@@ -133,6 +143,6 @@ rangeFactor = 1.5
 type = "mesh"
 name = "block"
 path = "../HiDEM/MeshBlock/wedge.obj"
-scale= [1200,1500,300]
+scale= [300,300,300]
 position = [0,0,330]
-shellScale = 5.0
+shellScale = 0.0

@@ -72,7 +72,7 @@ public:
         }
     }
 
-    void setOffset(float offsetX, float offsetY) {
+    virtual void setOffset(float offsetX, float offsetY) {
         xOffset = offsetX;
         yOffset = offsetY;
     }
@@ -102,17 +102,17 @@ public:
         int yPoint = std::floor(((y - yMin) * invYMaxMin) * (float) (yPoints - 1));
         //std::cout << xPoint << " " << yPoint << " ";
         // clamp
-        int xLow = std::clamp(xPoint, 0, xPoints - 1);
-        int yLow = std::clamp(yPoint, 0, yPoints - 1);
-        int xHigh = std::clamp(xPoint + 1, 0, xPoints - 1);
-        int yHigh = std::clamp(yPoint + 1, 0, yPoints - 1);
+        int xLow = clamp(xPoint, 0, xPoints - 1);
+        int yLow = clamp(yPoint, 0, yPoints - 1);
+        int xHigh = clamp(xPoint + 1, 0, xPoints - 1);
+        int yHigh = clamp(yPoint + 1, 0, yPoints - 1);
         return std::make_tuple(xLow, yLow, xHigh, yHigh);
     }
 
     DEVCALLABLE
     T interp(float x, float y) {
-        x -= xOffset;
-        y -= yOffset;
+        x += xOffset;
+        y += yOffset;
 
         auto [xLow, yLow, xHigh, yHigh] = getIndexes(x, y);
 

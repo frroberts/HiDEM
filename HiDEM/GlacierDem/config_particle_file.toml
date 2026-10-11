@@ -1,11 +1,11 @@
 [general]
 # set size scale of particles and the entire system
-scale = 10.0
+scale = 20.0
 
 g = 9.81
 beamWidth = 0.5
 E = 2e+9
-waterLevel = 300.0
+waterLevel = 90.0
 maxVel = 20.0
 maxRot = 5.0
 bedInteract = 0.5
@@ -23,28 +23,38 @@ attractDistance = 0.01
 attractScaleForce = 1e-5
 
 # Boundary conditions enforced
-xBoundaryMin = false
-yBoundaryMin = false
-xBoundaryMax = false
+xBoundaryMin = true
+yBoundaryMin = true
+xBoundaryMax = true
 yBoundaryMax = false
 
 # DT
-dt = 0.0002
+dt = 0.0005
 # when to allow link breaking to start, in simulated time
-breakTime = 5.0
+breakTime = 0.0
 
 [iteration]
 # number of iterations to run
 timeSteps = 600000
 # interval of how often to output
-outputInterval = 5000
+outputInterval = 10000
+
+[externalForce]
+# external forces to be applied each time step
+# this section is under development, and will change when force changing over time gets implemented
+xForce = 0.0
+yForce = 0.0
+zForce = 0.0
+uForce = 0.0
+vForce = 0.0
+wForce = 0.0
 
 [output]
 # path to work from
 outWorkingPath = "../Data/"
 # The program will add the appropriate prefix to this name, wont be written if left empty or not present
 outParticleFile = "pOut"
-# the type of output we use, CSV or HDF5, VTK (buggy), VKTHDF
+# the type of output we use, CSV or HDF5, VTK (buggy), VTKHDF
 outParticleType = "VTKHDF"
 # The program will add the appropriate prefix to this name, wont be written if left empty or not present
 outLinkFile = ""
@@ -69,7 +79,7 @@ gridRegenInterval = -1
 # enable checkpoint writing at end
 writeEndCheckpoint = true
 # interval at which to write the checkpoint -1 for no periodic
-checkpointInterval = -1
+checkpointInterval = 1000
 # directory name in the working path to create the checkpoints in
 checkpointDirectory = "checkpoints"
 # append timestep to filename, if false it will only keep one file
@@ -97,12 +107,11 @@ haloScale = 1.2
 
 # unscaled radius and spacing
 [lattice]
-type = "FCC"
-# yeah these constants are a bit arbitrary
+type = "File"
+path = "../Tools/particleFile.h5"
 particleRadius = 0.5
-fccSpacing = 1.41421
-linkGenScale = 1.2
 
+linkGenScale = 1.2
 # seed for random generation
 seed = 1
 # offset to add to seed for each rank
@@ -114,7 +123,12 @@ zeroCenter = false
 [world]
 # limit geometry generation to this XYZ box
 # these are optional, and if left out the geometry will be based on the geometry limits
-
+xInputUpper = 1000
+yInputUpper = 1000
+# zInputUpper = 1000.0
+xInputLower = 0
+yInputLower = 0
+# zInputLower = 0.0
 
 [[iceParameters]]
 # glacier
@@ -122,17 +136,16 @@ linkGenerateProbability = 1.0
 boundingGeometry = "block"
 linkWith = [0]
 
-[collisionMeshParameters]
-# particle radius (max, scaled) * cellSizeScale = cellSize
-cellSizeScale = 4.0
-# how much buffer to have in each cell counted as partilcle radius * rangeFactor
-rangeFactor = 1.5
-
-#collisionGeometry
 [[geometry]]
-type = "mesh"
+type = "box"
 name = "block"
-path = "../HiDEM/MeshBlock/wedge.obj"
-scale= [1200,6000,300]
-position = [0,0,330]
-shellScale = 5.0
+lower = [0,0,0]
+upper = [1000,1000,1000]
+
+[[collisionGeometry]]
+# mandatory to have one bed geometry
+type = "bed"
+name = "bed"
+path = "../HiDEM/GlacierDem/dem.csv"
+baseFieldID = 3
+frictionFieldID = 4

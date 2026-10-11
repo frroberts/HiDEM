@@ -19,6 +19,7 @@ DEFS += -DSET_CT_FP32=1
 DEFS += -DAOSOA_CT=1
 DEFS += -DENABLE_GDR=1
 DEFS += -DENABLE_ASYNC_COMM=1
+DEFS += -DMITIGATE_HDF5_DEV_WRITE_ISSUE=1
 
 COMP = hipcc -Wno-unused-result
 FLAGS = ${INCL_PATHS} ${MPI_INCL} ${HDF5_INCL} ${DEFS} --std=c++20 -O3 -g --offload-arch=gfx90a:xnack+
@@ -70,13 +71,7 @@ CompoundInput.o : ../PLiB/Geometry/CompoundInput.cpp Global.h
 	${COMP} ${FLAGS} -c $<
 MapLoader.o : ../PLiB/Geometry/MapLoader.cpp Global.h
 	${COMP} ${FLAGS} -c $<
-InputMesh.o : ../PLiB/Geometry/InputMesh.cpp Global.h
-	${COMP} ${FLAGS} -c $<
 
-HiDEMDistribution.o : ../HiDEMLib/HiDEMDistribution.cpp Global.h
-	${COMP} ${FLAGS} -c $<
-HiDEMH5Checkpoint.o : ../HiDEMLib/HiDEMH5Checkpoint.cpp Global.h
-	${COMP} ${FLAGS} -c $<
 HiDEMGeometry.o : ../HiDEMLib/HiDEMGeometry.cpp Global.h
 	${COMP} ${FLAGS} -c $<
 

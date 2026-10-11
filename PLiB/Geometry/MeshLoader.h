@@ -14,83 +14,92 @@
 #include "../Util/Real3.h"
 #include "Triangle.h"
 #include "../Logger/Logger.h"
+#include "../Util/Util.h"
 
 class MeshLoader {
 public:
+    static Real3 strToReal3(std::string endStr) {
+        Real3 v;
+        v.x = std::stof( endStr.substr(0, endStr.find_first_of(" ")));
+        endStr = endStr.substr(endStr.find_first_of(" ")+1);
+        v.y = std::stof( endStr.substr(0, endStr.find_first_of(" ")));
+        endStr = endStr.substr(endStr.find_first_of(" ")+1);
+        v.z = std::stof( endStr.substr(0, endStr.find_first_of(" ")));
+
+        return v;
+    }
+
     static std::vector<Triangle> loadObj(std::string path) {
 
         std::vector<Real3> vertices;
         std::vector<Real3> vertexNormals;
         std::vector<Real3> vertexTexture;
-        //std::vector<glm::vec<3, glm::vec<3, int>>> faces;
         std::vector<Triangle> faces;
-
-        //Mesh m;
 
         std::chrono::time_point<std::chrono::system_clock> start, end;
         start = std::chrono::system_clock::now();
-        // normal is third element
-        const static std::string fpMatch = "-?[\\d.]+(?:e-?\\d+)?";
-
-        const static std::regex vertexRegex("v\\s+(" + fpMatch + ")\\s+(" + fpMatch + ")\\s+(" + fpMatch + ")");
-        const static std::regex vertexNormalRegex("vn\\s+(" + fpMatch + ")\\s+(" + fpMatch + ")\\s+(" + fpMatch + ")");
-        const static std::regex texCordRegex("vt\\s+(" + fpMatch + ")\\s+(" + fpMatch + ")\\s+(" + fpMatch + ")");
-        const static std::regex faceRegex(R"(f\s+([0-9]+)/([0-9]+)/([0-9]+)\s+([0-9]+)/([0-9]+)/([0-9]+)\s+([0-9]+)/([0-9]+)/([0-9]+))"); // needs to support n//n as well
-        const static std::regex faceRegexSingle(R"(f\s+([0-9]+)\s+([0-9]+)\s+([0-9]+))");
 
         std::ifstream ifs;
         ifs.open(path, std::ifstream::in);
-        //if (ifs.good())
-        //	std::cout << "file opened" << std::endl;
+        if (!ifs.good())
+        	std::cout << path << " file open failed" << std::endl;
+
         while (ifs.good()) {
             std::string line;
             std::getline(ifs, line);
 
-            // show contents of marked subexpressions within each match
-            std::smatch matches;
-            if (std::regex_search(line, matches, vertexRegex)) {
-                Real3 v;
-                v.x = atof(matches[1].str().c_str());
-                v.y = atof(matches[2].str().c_str());
-                v.z = atof(matches[3].str().c_str());
+            // really want to do string_view here, but
+            if (line.length() < 2)
+                continue;
+
+            auto strStart = std::string(line.data(),2);
+
+            if (strStart.find("v ") != std::string::npos) {
+                auto endStr = std::string(line.data()+2,line.size()-2);
+                Real3 v = strToReal3(endStr);
                 vertices.push_back(v);
-            } else if (std::regex_search(line, matches, vertexNormalRegex)) {
-                Real3 vn;
-                vn.x = atof(matches[1].str().c_str());
-                vn.y = atof(matches[2].str().c_str());
-                vn.z = atof(matches[3].str().c_str());
+            } else if (strStart.find("vn") != std::string::npos) {
+                auto endStr = std::string(line.data()+3,line.size()-3);
+                Real3 vn = strToReal3(endStr);
                 vertexNormals.push_back(vn);
-            } else if (std::regex_search(line, matches, texCordRegex)) {
-                Real3 vt;
-                vt.x = atof(matches[1].str().c_str());
-                vt.y = atof(matches[2].str().c_str());
-                vt.z = atof(matches[3].str().c_str());
+            } else if (strStart.find("vt") != std::string::npos) {
+                auto endStr = std::string(line.data()+3,line.size()-3);
+                Real3 vt = strToReal3(endStr);
                 vertexTexture.push_back(vt);
-            } else if (std::regex_search(line, matches, faceRegex)) {
-                // vertex normal texture
-                faces.push_back({
-                                        vertices[atoi(matches[1].str().c_str()) - 1],
-                                        vertices[atoi(matches[4].str().c_str()) - 1],
-                                        vertices[atoi(matches[7].str().c_str()) - 1],
-                                });
+            } else if (strStart.find("f ") != std::string::npos) {
+                auto endStr = std::string(line.data()+2,line.size()-2);
 
-                faces.back().normal = vertexNormals[atoi(matches[3].str().c_str()) - 1];
-            } else if (std::regex_search(line, matches, faceRegexSingle)) {
-                // vertex normal texture
-                faces.push_back({
-                                        vertices[atoi(matches[1].str().c_str()) - 1],
-                                        vertices[atoi(matches[2].str().c_str()) - 1],
-                                        vertices[atoi(matches[3].str().c_str()) - 1],
-                                });
+                int numSlash = std::reduce(endStr.begin(), endStr.end(), 0, [](int count, char c) -> int {
+                    return count + (c == '/');
+                });
 
+                std::array<Real3, 3> vtxes;
+                std::array<Real3, 3> vtxsNormals;
+                int i = 0;
+
+                splitStringDelims(endStr, " ", [&](std::string token) {
+                    int vtxId = std::stoi(token.substr(0, token.find_first_of('/')));
+                    vtxes[i] = vertices[vtxId-1];
+                    if (numSlash != 0) {
+                        int normalId = std::stoi(token.substr(token.find_last_not_of('/'), token.size() - 1));
+                        // vtxsNormals[i] = vertexNormals[normalId-1];
+                    }
+                    i++;
+                });
+                if (i != 3) {
+                    std::cout << "malformed tri " << endStr << std::endl;
+                }
+                Triangle tri{ vtxes[0], vtxes[1], vtxes[2] };
+                faces.push_back(tri);
             }
+
         }
 
 
         end = std::chrono::system_clock::now();
 
         std::chrono::duration<double> elapsed_seconds = end - start;
-        Logger::writeAtFirst("Mesh load time at rank 0: " + std::to_string(elapsed_seconds.count()) + "s " + std::to_string(faces.size()) + " triangles");
+        Logger::writeAtFirst(path +" Mesh load time at rank 0: " + std::to_string(elapsed_seconds.count()) + "s " + std::to_string(faces.size()) + " triangles\n");
 
         return faces;
     }

@@ -25,7 +25,7 @@ public:
 
     static T max(ManVec<T> &in) {
         return stx::reduce(EXECPOLICY in.begin(), in.end(), std::numeric_limits<T>::lowest(),
-                           []DEVCALLABLE(int a, int b) {
+                           []DEVCALLABLE(T a, T b) {
                                return std::max(a, b);
                            });
     }
@@ -35,7 +35,7 @@ public:
         T *ptr = in.data();
         auto indexPtr = indexes.data();
         return transformReduce(indexes.begin(), indexes.end(), std::numeric_limits<T>::lowest(),
-                               []DEVCALLABLE(int a, int b) {
+                               []DEVCALLABLE(T a, T b) {
                                    return std::max(a, b);
                                },
                                [=] DEVCALLABLE (int i) {
@@ -44,14 +44,20 @@ public:
     }
 
     static T min(ManVec<T> &in) {
-        return stx::reduce(EXECPOLICY in.begin(), in.end(), std::numeric_limits<T>::max(), std::less<T>());
+        return stx::reduce(EXECPOLICY in.begin(), in.end(), std::numeric_limits<T>::max(),
+                           []DEVCALLABLE(T a, T b) {
+                               return std::min(a, b);
+                           });
     }
 
     template<class Tind>
     static T minIndirect(ManVec<T> &in, ManVec<Tind> &indexes) {
         T *ptr = in.data();
         auto indexPtr = indexes.data();
-        return transformReduce(indexes.begin(), indexes.end(), std::numeric_limits<T>::max(), std::less<T>(),
+        return transformReduce(indexes.begin(), indexes.end(), std::numeric_limits<T>::max(),
+                               []DEVCALLABLE(T a, T b) {
+                                   return std::min(a, b);
+                               },
                                [=] DEVCALLABLE (int i) {
                                    return ptr[i];
                                });

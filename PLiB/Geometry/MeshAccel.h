@@ -40,7 +40,6 @@ public:
 
     float rangeFactor = 1;
 
-    std::vector<std::vector<int>> cells;
 
     ManVec<int> starts;
     ManVec<int> sizes;
@@ -57,15 +56,6 @@ public:
 
     void generateAccel(lpReal_t cellSize, lpReal_t searchDistance,
                        lpReal_t *xVtxCord, lpReal_t *yVtxCord, lpReal_t *zVtxCord, int numTris) {
-
-        xCellSize = cellSize;
-        yCellSize = cellSize;
-        zCellSize = cellSize;
-
-        xCellSizeInv = 1.f / xCellSize;
-        yCellSizeInv = 1.f / yCellSize;
-        zCellSizeInv = 1.f / zCellSize;
-
         xUpper = std::numeric_limits<lpReal_t>::lowest();
         yUpper = std::numeric_limits<lpReal_t>::lowest();
         zUpper = std::numeric_limits<lpReal_t>::lowest();
@@ -73,9 +63,6 @@ public:
         xLower = std::numeric_limits<lpReal_t>::max();
         yLower = std::numeric_limits<lpReal_t>::max();
         zLower = std::numeric_limits<lpReal_t>::max();
-
-
-
 
         for (int i = 0; i < numTris*3; i++){
             auto x = xVtxCord[i];
@@ -95,26 +82,37 @@ public:
         xLower -= cellSize;
         yLower -= cellSize;
         zLower -= cellSize;
-
         xSize = xUpper - xLower;
         ySize = yUpper - yLower;
         zSize = zUpper - zLower;
+
+        xCellSize = cellSize;
+        yCellSize = cellSize;
+        zCellSize = cellSize;
+
+        xCellSizeInv = 1.f / xCellSize;
+        yCellSizeInv = 1.f / yCellSize;
+        zCellSizeInv = 1.f / zCellSize;
 
         xCount = 1 + (xSize / xCellSize);
         yCount = 1 + (ySize / yCellSize);
         zCount = 1 + (zSize / zCellSize);
 
-        cells.clear();
+        std::cout << cellSize << std::endl;
+
         sizes.clear();
         starts.clear();
         values.clear();
 
-        lpReal_t maxDist =
-                (((xCellSize * xCellSize) + (yCellSize * yCellSize) + (zCellSize * zCellSize)) * 0.5f) + searchDistance;
+        // should be enough to fit all
+        lpReal_t maxDist = (xCellSize * xCellSize) + (yCellSize * yCellSize) + (zCellSize * zCellSize) + searchDistance;
 
         starts.resize(xCount * yCount * zCount);
         sizes.resize(xCount * yCount * zCount);
 
+        if (sizes.size() ==0 ) {
+            std::cout << "mesh generation failed" << std::endl;
+        }
 
         Iterator::iterate3D(OffloadExec(), [=]  DEVCALLABLE(int x, int y, int z, MeshAccel &accel) {
             lpReal_t xPos = (x * accel.xCellSize + (0.5f * accel.xCellSize)) + accel.xLower;
@@ -169,8 +167,174 @@ public:
             std::cout << "Mesh grid size " << xSize << " " << ySize << " " << zSize << std::endl;
             std::cout << "Cell size " << cellSize << " " << xCellSize << " " << yCellSize << " " << zCellSize << std::endl;
         }
-        // print stats about grid
+    }
 
+    void toVTKHDF(std::string fileName) {
+        HDF5IO io;
+        io.createFile(fileName, MPI_COMM_WORLD);
+
+        io.openGroup("VTKHDF");
+        io.writeAttributeStr("Type", "UnstructuredGrid");
+        std::vector<long long int> version = {2, 2};
+        io.writeAttributeArr("Version", version);
+
+        ManVec<hpReal_t> points;
+        ManVec<int> connectivity;
+        ManVec<unsigned char> types;
+        ManVec<int> trisInCell;
+
+        int conn = 0;
+        int numCells = 0;
+        Iterator::iterate3D(SerialExec(), [&] (int x, int y, int z, MeshAccel &accel) {
+
+            int size = accel.sizes[(x * accel.yCount * zCount) + (y * accel.zCount) + (z)];
+            trisInCell.push_back(size);
+
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            types.push_back(11);
+            numCells++;
+
+            points.push_back(accel.xLower + (x * accel.xCellSize));
+            points.push_back(accel.yLower + (y * accel.yCellSize));
+            points.push_back(accel.zLower + (z * accel.zCellSize));
+
+            points.push_back(accel.xLower + ((x + 1) * accel.xCellSize));
+            points.push_back(accel.yLower + (y * accel.yCellSize));
+            points.push_back(accel.zLower + (z * accel.zCellSize));
+
+            points.push_back(accel.xLower + (x * accel.xCellSize));
+            points.push_back(accel.yLower + ((y + 1) * accel.yCellSize));
+            points.push_back(accel.zLower + (z * accel.zCellSize));
+
+            points.push_back(accel.xLower + ((x + 1) * accel.xCellSize));
+            points.push_back(accel.yLower + ((y + 1) * accel.yCellSize));
+            points.push_back(accel.zLower + (z * accel.zCellSize));
+
+            points.push_back(accel.xLower + (x * accel.xCellSize));
+            points.push_back(accel.yLower + (y * accel.yCellSize));
+            points.push_back(accel.zLower + ((z + 1) * accel.zCellSize));
+
+            points.push_back(accel.xLower + ((x + 1) * accel.xCellSize));
+            points.push_back(accel.yLower + (y * accel.yCellSize));
+            points.push_back(accel.zLower + ((z + 1) * accel.zCellSize));
+
+            points.push_back(accel.xLower + (x * accel.xCellSize));
+            points.push_back(accel.yLower + ((y + 1) * accel.yCellSize));
+            points.push_back(accel.zLower + ((z + 1) * accel.zCellSize));
+
+            points.push_back(accel.xLower + ((x + 1) * accel.xCellSize));
+            points.push_back(accel.yLower + ((y + 1) * accel.yCellSize));
+            points.push_back(accel.zLower + ((z + 1) * accel.zCellSize));
+
+        }, xCount, yCount, zCount, *this);
+        Iterator::syncAll();
+
+        io.writeVectorAll2D(points, "Points", 3);
+        ManVec<long long int> NumberOfPoints;
+        NumberOfPoints.push_back(points.size()/3);
+        io.writeVectorFirst(NumberOfPoints, "NumberOfPoints");
+
+        ManVec<int> NumberOfConnectivityIds;
+        NumberOfConnectivityIds.push_back(numCells * 8);
+        io.writeVectorFirst(NumberOfConnectivityIds, "NumberOfConnectivityIds");
+
+        ManVec<int> NumberOfCells;
+        NumberOfCells.push_back(numCells);
+        io.writeVectorFirst(NumberOfCells, "NumberOfCells");
+
+        ManVec<int> Offsets;
+        for (int i = 0; i < numCells + 1; i++) {
+            Offsets.push_back((i) * 8);
+        }
+        io.writeVectorFirst(Offsets, "Offsets");
+
+        io.writeVectorFirst(connectivity, "Connectivity");
+        io.writeVectorFirst(types, "Types");
+
+        io.openGroup("CellData");
+        io.writeVectorFirst(trisInCell, "trisInCell");
+        io.closeGroup();
+        io.closeGroup();
+
+        io.closeFile();
+    }
+
+    void flattenZ() {
+
+        // builds on the fact that the grid is laid out with Z as the inner dimmension
+
+        ManVec<int> startsNew;
+        ManVec<int> sizesNew;
+        ManVec<int> valuesNew;
+
+        startsNew.resize(xCount * yCount * 1);
+        sizesNew.resize(xCount * yCount * 1);
+
+        for (int xCell = 0; xCell < xCount; xCell++) {
+            for (int yCell = 0; yCell < yCount; yCell++) {
+                std::vector<int> newZCell;
+                for (int zCell = 0; zCell < zCount; zCell++) {
+                    int cell = (xCell * yCount * zCount) + (yCell * zCount) + zCell;
+
+                    int start = starts[cell];
+                    int end = start + sizes[cell];
+                    for (int i = start; i < end; i++) {
+                        //
+                        int tri = values[i];
+                        newZCell.push_back(tri);
+                    }
+                }
+
+                std::sort( newZCell.begin(), newZCell.end() );
+                newZCell.erase( std::unique( newZCell.begin(), newZCell.end() ), newZCell.end() );
+                int newZCellSize = newZCell.size();
+
+                sizesNew[(xCell * yCount * 1) + (yCell * 1) + (0)] = newZCellSize;
+
+            }
+        }
+
+        ParallelScan::exclusive(sizesNew, startsNew);
+        valuesNew.resize(sizesNew[sizesNew.size() - 1] + startsNew[startsNew.size() - 1]);
+
+        for (int xCell = 0; xCell < xCount; xCell++) {
+            for (int yCell = 0; yCell < yCount; yCell++) {
+                std::vector<int> newZCell;
+                for (int zCell = 0; zCell < zCount; zCell++) {
+                    int cell = (xCell * yCount * zCount) + (yCell * zCount) + zCell;
+                    int start = starts[cell];
+                    int end = start + sizes[cell];
+                    for (int i = start; i < end; i++) {
+                        //
+                        int tri = values[i];
+                        newZCell.push_back(tri);
+                    }
+                }
+                std::sort( newZCell.begin(), newZCell.end() );
+                newZCell.erase( std::unique( newZCell.begin(), newZCell.end() ), newZCell.end() );
+
+                int start = startsNew[(xCell * yCount * 1) + (yCell * 1) + (0)];
+                for (int i = start; i < start+sizesNew[(xCell * yCount * 1) + (yCell * 1) + (0)]; i++) {
+                    valuesNew[i] = newZCell[i-start];
+                }
+            }
+        }
+
+        // set z to just one bucket
+        zCount = 1;
+        zCellSize = zSize;
+        zCellSizeInv = 1.f / zCellSize;
+
+        std::swap(starts,startsNew);
+        std::swap(sizes,sizesNew);
+        std::swap(values,valuesNew);
     }
 
     DEVCALLABLE
@@ -203,7 +367,7 @@ public:
 
     DEVCALLABLE
     auto triSDF2(Real3f &p, Real3f &a, Real3f &b, Real3f &c) -> lpReal_t {
-        // returns the square distance, to get the read distance compute sqrt(triSDF2)
+        // returns the square distance, to get the real distance compute sqrt(triSDF2)
 
 
         auto dot2 = [](Real3f vec) {
@@ -224,10 +388,10 @@ public:
             return 0.f;
         };
 
-        auto clamp = [](Real3f vec, lpReal_t hi, lpReal_t lo) {
-            return Real3f(std::clamp((lpReal_t) vec.x, hi, lo),
-                         std::clamp((lpReal_t) vec.y, hi, lo),
-                         std::clamp((lpReal_t) vec.z, hi, lo));
+        auto clamp3 = [](Real3f vec, lpReal_t hi, lpReal_t lo) {
+            return Real3f(clamp((lpReal_t) vec.x, hi, lo),
+                         clamp((lpReal_t) vec.y, hi, lo),
+                         clamp((lpReal_t) vec.z, hi, lo));
         };
 
         return (
@@ -236,9 +400,9 @@ public:
                  sign(Real3f::dot(Real3f::cross(ac, nor), pc)) < 2.0)
                 ?
                 std::min(std::min(
-                                 dot2(ba * clamp(Real3f::dot(ba, pa) / dot2(ba), 0.0, 1.0) - pa),
-                                 dot2(cb * clamp(Real3f::dot(cb, pb) / dot2(cb), 0.0, 1.0) - pb)),
-                         dot2(ac * clamp(Real3f::dot(ac, pc) / dot2(ac), 0.0, 1.0) - pc))
+                                 dot2(ba * clamp3(Real3f::dot(ba, pa) / dot2(ba), 0.0, 1.0) - pa),
+                                 dot2(cb * clamp3(Real3f::dot(cb, pb) / dot2(cb), 0.0, 1.0) - pb)),
+                         dot2(ac * clamp3(Real3f::dot(ac, pc) / dot2(ac), 0.0, 1.0) - pc))
                 :
                 Real3f::dot(nor, pa) * Real3f::dot(nor, pa) / dot2(nor));
     };
@@ -295,7 +459,7 @@ public:
         Real3 pvec = Real3::cross(dir, e2);
         float det = Real3::dot(e1, pvec);
         if ((det < 1e-8f && det > -1e-8f))
-            return std::numeric_limits<float>::infinity();
+            return std::numeric_limits<float>::max();
 
 
         float inv_det = 1.f / det;
@@ -303,57 +467,93 @@ public:
         float u = Real3::dot(tvec, pvec) * inv_det;
 
         if ((u < 0.f || u > 1.f))
-            return std::numeric_limits<float>::infinity();
+            return std::numeric_limits<float>::max();
 
         Real3 qvec = Real3::cross(tvec, e1);
         float v = Real3::dot(dir, qvec) * inv_det;
         if (((v < 0.f || u + v > 1.f)))
-            return std::numeric_limits<float>::infinity();
+            return std::numeric_limits<float>::max();
 
         r = Real3::dot(e2, qvec) * inv_det;
         return r;
 
     }
 
+    bool withinGeometryShellCheck(Real3 cord, double radius, bool outerShell,
+                                lpReal_t *xVtxCord, lpReal_t *yVtxCord, lpReal_t *zVtxCord, int numTris) 
+    {
+        bool inMesh = withinGeometry(cord, xVtxCord, yVtxCord, zVtxCord, numTris);
+
+        if (radius == 0) {
+            return inMesh;
+        }
+
+        if (inMesh && !outerShell) {
+            // inside and we need to do a reversed shell
+            // check distance to geometry
+            auto [closest, dist, searched] = getClosestTriAccel(cord.x, cord.y, cord.z, radius,
+                                                                xVtxCord, yVtxCord, zVtxCord);
+            if (dist < radius*radius) {
+                // std::cout << "hit in" << std::endl;
+                inMesh = false;
+            }
+        } else if (!inMesh && outerShell) {
+            // outside and we need to do a shell
+            // check distance to geometry
+            auto [closest, dist, searched] = getClosestTriAccel(cord.x, cord.y, cord.z, radius,
+                                                                xVtxCord, yVtxCord, zVtxCord);
+            //std::cout << closest << std::endl;
+            if (dist < radius*radius) {
+                // std::cout << "hit out" << std::endl;
+                inMesh = true;
+            }
+        }
+
+        return inMesh;
+
+                                }
 
         // unaccelerated, need to think how to accelerate this, triangles can be in multiple cells
-    bool withinGeometry(Real3 cord, double radius,
-                                lpReal_t *xVtxCord, lpReal_t *yVtxCord, lpReal_t *zVtxCord, int numTris) {
+    bool withinGeometry(Real3 cord, lpReal_t *xVtxCord, lpReal_t *yVtxCord, lpReal_t *zVtxCord, int numTris) {
         // check bounding box
+        // bounding box might be too small ?
         if (!inBB(cord.x, cord.y, cord.z)) {
             return false;
         }
 
         // check if inside geometry
-        Real3 dir{0,1,0.5};
-        lpReal_t closestHit = std::numeric_limits<float>::infinity();
+
+        Real3 dir{0,0,1};
+        lpReal_t closestHit = std::numeric_limits<float>::max();
         int hits = 0;
-        for (int i = 0; i < numTris; i++) {
-            auto p1 = Real3(xVtxCord[i * 3], yVtxCord[(i * 3)], zVtxCord[(i * 3)]);
-            auto p2 = Real3{xVtxCord[(i * 3) + 1], yVtxCord[(i * 3) + 1], zVtxCord[(i * 3) + 1]};
-            auto p3 = Real3{xVtxCord[(i * 3) + 2], yVtxCord[(i * 3) + 2], zVtxCord[(i * 3) + 2]};
+
+
+        // assumes we have flattened Z dir
+        auto [xCell, yCell, zCell] = getCellCord(Real3f(cord.x, cord.y, cord.z));
+
+        int cell = (xCell * yCount * zCount) + (yCell * zCount) + (0);
+
+        int start = starts[cell];
+        int end = start + sizes[cell];
+
+        for (int i = start; i < end; i++) {
+            //
+            int tri = values[i];
+
+            auto p1 = Real3(xVtxCord[tri * 3], yVtxCord[(tri * 3)], zVtxCord[(tri * 3)]);
+            auto p2 = Real3{xVtxCord[(tri * 3) + 1], yVtxCord[(tri * 3) + 1], zVtxCord[(tri * 3) + 1]};
+            auto p3 = Real3{xVtxCord[(tri * 3) + 2], yVtxCord[(tri * 3) + 2], zVtxCord[(tri * 3) + 2]};
 
             lpReal_t dist = intersectDist(cord, dir, p1, p2, p3);
 
-            if (dist != std::numeric_limits<lpReal_t>::infinity() && dist > 0) {
+            if (dist != std::numeric_limits<lpReal_t>::max() && dist > 0) {
                 hits++;
                 closestHit = std::min(dist, closestHit);
             }
         }
 
+
         bool inMesh = hits % 2;
-
-        // todo reenable from clear zone around meshses
-
-        // check distance to geometry
-        auto [closest, dist, searched] = getClosestTriAccel(cord.x, cord.y, cord.z, radius,
-                                         xVtxCord, yVtxCord, zVtxCord);
-        //std::cout << closest << std::endl;
-        if(dist < radius)
-            inMesh = true;
-
-
-        //std::cout << "out" << std::endl;
 
         return inMesh;
 

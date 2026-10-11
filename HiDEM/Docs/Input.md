@@ -116,7 +116,7 @@ timestepCheckpoint = true
 ```
 
 # Lattice types
-The `[lattice]` segment allows you to set different types of lattices to genererate the geometry from. Currently supported lattice `type`s are `FCC` and `Block`. 
+The `[lattice]` segment allows you to set different types of lattices to genererate the geometry from. Currently supported lattice `type`s are `FCC`, `HCP` and `Block`. 
 
 Any sizes given here are unscaled, so the true size will be computed as `size * scale`
 
@@ -146,14 +146,43 @@ zeroCenter = false
 
 `seedOffset` the offset applied to the seed for each rank, so the seed for rank N would be `seed + (N * seedOffset)`
 
-`zeroCenter` centers the simulation around zero. (currently disabled)
+`zeroCenter` centers the simulation around zero in X and Y, Z is not altered, the cordinates outputted will be offset based around zero. 
+Centering around zero will increase the precision of the simulation.
+
+`originCoordinate` takes a 3 element array like `[0,0,375]` that sets the origin for the lattice generated, the code will attempt to place one point at that coordinate.
 
 ## FCC lattice
+
+Setting `type` to `FCC` generateds an FCC lattice that looks as follows:
+
+![](Images/fcc.jpg "FCC lattice")
+
 The FCC lattice needs the following specified:
 
 `particleRadius` which is the radius of the particles
 
 `fccSpacing` which is the spacing of the particles in the fcc lattice
+
+### FCC rotation
+
+The FCC laticce supports rotating the lattice before it gets generated. 
+
+The rotation works by setting `fccRotation` to a 3 element array of the desired rotation in radians for instance `fccRotation = [0.5,1,1.2]` 
+currently rotating the fcc lattice will not work the `originCoordinate` argument, the rotation will happen but the origin coordinate will not be set properly. 
+
+## HCP lattice
+
+The HCP lattice is essentially an FCC lattice rotated
+
+Setting `type` to `HCP` generateds an HCP lattice that looks as follows:
+
+![](Images/hcp.jpg "HCP lattice")
+
+The HCP lattice needs the following specified:
+
+`particleRadius` which is the radius of the particles
+
+The HCP lattice does not support tweaking the spacing
 
 ## Block lattice
 
@@ -235,7 +264,7 @@ baseFieldID = 3
 ### Mesh
 
 For the mesh geometry the input needs to be and .obj file, and the mesh needs to be solid. 
-The mesh geometry is somewhat special in that it has optional scale and position arguments, if left undefined scale will default to {1,1,1} i.e. no scaling applied adn position will default to {0,0,0}.
+The mesh geometry is somewhat special in that it has optional scale and position arguments, if left undefined scale will default to {1,1,1} i.e. no scaling applied and position will default to {0,0,0}.
 
 ```toml
 [[geometry]]
@@ -246,16 +275,20 @@ scale = [-10,-10,-10] # optional, otherwise 1
 position = [250,250,500] # optional, otherwise 0
 ```
 
+Additionally meshes support a `shellScale` argument, which is used to determine how much of a shell around (or within) the geomtry is used when generating particles. The value is based on the particle diameter, a shell scale of 1 will leave at least a 1 particle radius of clear space around the geometry (measured from the particle center).
+
+![](Images/ShellScale.png "HCP lattice")
+
 ## Collision geometry
 
 Collision geometry is any geometry that the particles will interact with. Currently the supported collision geometry types are a simple bed geometry, so a DEM of the bottom surface the particles interact with. 
-In addition to this there is experimental support for collisions between particles and a static mesh geometry. 
+In addition to this there is support for collisions between particles and a static mesh geometry. 
 
 Collision geomtry can be used as a bounding geometry as well, which must be used to avoid generating particles inside your geometry.
 
 As with the bounding geometries, each primary geometry has a type field that describes what type of geometry it is, and follows the same rules.
 
-How to use collision geometries in the code in described in XXX. # todo fix reference here
+How to use collision geometries in the code in described in the `SheetMeshCollsion` sample.
 
 ### Bed
 
@@ -275,19 +308,9 @@ frictionFieldID = 4
 
 ### Mesh
 
-**This is a "feature preview" and is subject to change**
+**This is still not entirely stable and still somewhat subject to change**
 
-For the mesh geometry the input needs to be and .obj file, and the mesh needs to be solid. 
-The mesh geometry is somewhat special in that it has optional scale and position arguments, if left undefined scale will default to {1,1,1} i.e. no scaling applied adn position will default to {0,0,0}.
-
-```toml
-[[collisionGeometry]]
-type = "mesh"
-name = "teapot"
-path = "../Data/teapot.obj"
-scale = [-10,-10,-10] # optional, otherwise 1
-position = [250,250,500] # optional, otherwise 0
-```
+The arguments for meshes as collision geometry are the same as the mesh as a bounding mesh. 
 
 ## Compound geometry
 

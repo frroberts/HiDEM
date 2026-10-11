@@ -29,7 +29,7 @@ public:
 		Real3 pvec = Real3::cross(dir, e2);
 		float det = Real3::dot(e1, pvec);
 		if ((det < 1e-8f && det > -1e-8f))
-			return std::numeric_limits<float>::infinity();
+			return std::numeric_limits<float>::max();
 
 
 		float inv_det = 1.f / det;
@@ -37,12 +37,12 @@ public:
 		float u = Real3::dot(tvec, pvec) * inv_det;
 
 		if ((u < 0.f || u > 1.f))
-			return std::numeric_limits<float>::infinity();
+			return std::numeric_limits<float>::max();
 
 		Real3 qvec = Real3::cross(tvec, e1);
 		float v = Real3::dot(dir, qvec) * inv_det;
 		if (((v < 0.f || u + v > 1.f)))
-			return std::numeric_limits<float>::infinity();
+			return std::numeric_limits<float>::max();
 
 		r = Real3::dot(e2, qvec) * inv_det;
 		return r;

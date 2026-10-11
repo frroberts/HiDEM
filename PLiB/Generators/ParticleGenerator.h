@@ -34,16 +34,13 @@ public:
         }
     }
 
-    void createParticle(Real3 cord, int owner, std::vector<ElementaryParticle>&particles,
+    void createParticle(Real3 cord, int owner, ManVec<ElementaryParticle>&particles,
                         Domain&dom, const std::vector<std::shared_ptr<InputGeometry>>&geometries,
                         const std::vector<Map<double> *>&generateProbabilities, Real3 offset, double radius, double prob = 1) {
         int geomType = 0;
-        bool found = false;
-        Real3 cordUpper = cord + offset + radius;
-        Real3 cordLower = cord + offset - radius;
         // get new random probability here
-        for (auto geom: geometries) {
-            if (geom->withinGeometry(cord + offset, radius) && !found && dom.within(cord + offset)) {
+        for (const auto &geom: geometries) {
+            if (geom->withinGeometry(cord, radius) && dom.within(cord)) {
                 double denAtCord = generateProbabilities[geomType]->getVal(cord.x, cord.y, cord.z);
                 // if generated probability is less than ice generate probability for the current type then skip it
                 if (denAtCord >= prob) {
@@ -52,8 +49,6 @@ public:
                     tp.initConstruct(cord, owner, radius);
                     tp.type = geomType;
                     particles.push_back(tp);
-                    found = true;
-                    // break here ?
                     return;
                 }
             }

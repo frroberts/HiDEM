@@ -301,6 +301,16 @@ inline devError_t devStreamSynchronize(devStream_t pStream){
 #endif
 }
 
+inline xvtxRangeId_t xvtxRangePush(std::string name){
+#if ENABLE_CUDA
+    return nvtxRangePush(name.c_str());
+#elif ENABLE_HIP
+    return 0;
+#else
+    return 0;
+#endif
+}
+
 inline xvtxRangeId_t xvtxRangeStart(std::string name){
 #if ENABLE_CUDA
     return nvtxRangeStart(name.c_str());
@@ -318,6 +328,15 @@ inline void xvtxRangeEnd(xvtxRangeId_t range){
 #else
 #endif
 }
+
+inline void xvtxRangePop(){
+#if ENABLE_CUDA
+    nvtxRangePop();
+#elif ENABLE_HIP
+#else
+#endif
+}
+
 
 
 #endif //PHELL_DEVPORTABILITYLAYER_H

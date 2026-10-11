@@ -545,12 +545,12 @@ int main(int argc, char *argv[]) {
             hiDem.computeIteratedNeighbours(pData.iteratedNeighbours);
 
             hiDem.snapshotParticles(std::make_tuple(
-                                            "iteratedNeighbours", "iteratedLinks", "owner", "flag"),
-                                    packVecPtrs(pData.iteratedNeighbours, pData.iteratedLinks, pData.owners, pData.flag));
+                                            "iteratedNeighbours", "iteratedLinks", "owner", "flag", "type"),
+                                    packVecPtrs(pData.iteratedNeighbours, pData.iteratedLinks, pData.owners, pData.flag, pData.type));
 
             hiDem.snapshotLinks(std::make_tuple(
                                         "state", "keyEndA", "keyEndB", "globalKey"),
-                                packVecPtrs(lData.state, lData.globalKeyEndA, lData.globalKeyEndA,
+                                packVecPtrs(lData.state, lData.globalKeyEndA, lData.globalKeyEndB,
                                             lData.globalKeys));
         }
 

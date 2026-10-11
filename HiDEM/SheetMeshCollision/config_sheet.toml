@@ -1,6 +1,6 @@
 [general]
 # set size scale of particles and the entire system
-scale = 5.0
+scale = 10.0
 
 g = 9.81
 beamWidth = 1.2
@@ -21,6 +21,10 @@ maxLoad = 25e-4
 bendBreak = 0.08
 attractDistance = 0.01
 attractScaleForce = 1e-5
+
+meshDrag = 20000.0
+meshForce = 2e+8
+
 
 # DT
 dt = 0.00005
@@ -93,11 +97,12 @@ haloScale = 10
 
 # unscaled radius and spacing
 [lattice]
-type = "FCC"
+type = "HCP"
 # yeah these constants are a bit arbitrary
-particleRadius = 0.561231024154686
-fccSpacing = 1.5874010519682
+particleRadius = 0.5
+fccSpacing = 1.41421
 linkGenScale = 1.2
+originCoordinate = [0,0,375]
 
 # seed for random generation
 seed = 1
@@ -105,6 +110,8 @@ seed = 1
 seedOffset = 10
 # center the generated geometry around zero
 zeroCenter = false
+# the origin coordinate used for particle generation
+# particle generation will place one particle at exactly this coodinate
 
 [world]
 
@@ -126,8 +133,8 @@ linkWith = [0]
 [[geometry]]
 type = "box"
 name = "sheet"
-upper =[1900, 900, 380]
-lower = [-2000, -900, 360]
+upper =[1900, 900, 385]
+lower = [-2000, -900, 365]
 
 [[geometry]]
 type = "box"
@@ -148,4 +155,4 @@ name = "cone"
 path = "../HiDEM/SheetMeshCollision/cone.obj"
 scale= [150,100,160]
 position = [955,-350,370]
-shellScale = 5.0
+shellScale = 2.0

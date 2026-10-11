@@ -16,8 +16,11 @@
 
 class InputGeometry : public ManagedParent{
 
+protected:
+    Real3 offset;
 public:
     virtual bool withinGeometry(Real3 point, lpReal_t radius) = 0;
+    // set offset modifies the data in the geometry
     virtual void setOffset(Real3 offset) = 0;
     virtual auto getLimits() -> std::tuple<Real3, Real3> = 0;
 };
@@ -48,6 +51,7 @@ public:
 };
 
 class InputBed: public InputGeometry {
+    lpReal_t zOffset = 0.f;
 public:
     Map2d<lpReal_t>* bed;
     Map2d<lpReal_t>* friction;

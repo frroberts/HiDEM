@@ -42,6 +42,104 @@ public:
         return d;
     }
 
+    void domiansToVTKHDF(std::string fileName) {
+        //
+        HDF5IO io;
+        io.createFile(fileName, MPI_COMM_WORLD);
+
+        io.openGroup("VTKHDF");
+        io.writeAttributeStr("Type", "UnstructuredGrid");
+        std::vector<long long int> version = {2, 2};
+        io.writeAttributeArr("Version", version);
+
+        ManVec<hpReal_t> points;
+        ManVec<int> connectivity;
+        ManVec<unsigned char> types;
+        ManVec<int> owner;
+
+        int conn = 0;
+        int numCells = 0;
+
+        for (auto d: domains) {
+
+            owner.push_back(d.owner);
+
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            types.push_back(11);
+            numCells++;
+
+            points.push_back(d.lower.x);
+            points.push_back(d.lower.y);
+            points.push_back(d.lower.z);
+
+            points.push_back(d.upper.x);
+            points.push_back(d.lower.y);
+            points.push_back(d.lower.z);
+
+            points.push_back(d.lower.x);
+            points.push_back(d.upper.y);
+            points.push_back(d.lower.z);
+
+            points.push_back(d.upper.x);
+            points.push_back(d.upper.y);
+            points.push_back(d.lower.z);
+
+            points.push_back(d.lower.x);
+            points.push_back(d.lower.y);
+            points.push_back(d.upper.z);
+
+            points.push_back(d.upper.x);
+            points.push_back(d.lower.y);
+            points.push_back(d.upper.z);
+
+            points.push_back(d.lower.x);
+            points.push_back(d.upper.y);
+            points.push_back(d.upper.z);
+
+            points.push_back(d.upper.x);
+            points.push_back(d.upper.y);
+            points.push_back(d.upper.z);
+        }
+
+        Iterator::syncAll();
+
+        io.writeVectorAll2D(points, "Points", 3);
+        ManVec<long long int> NumberOfPoints;
+        NumberOfPoints.push_back(points.size() / 3);
+        io.writeVectorFirst(NumberOfPoints, "NumberOfPoints");
+
+        ManVec<int> NumberOfConnectivityIds;
+        NumberOfConnectivityIds.push_back(numCells * 8);
+        io.writeVectorFirst(NumberOfConnectivityIds, "NumberOfConnectivityIds");
+
+        ManVec<int> NumberOfCells;
+        NumberOfCells.push_back(numCells);
+        io.writeVectorFirst(NumberOfCells, "NumberOfCells");
+
+        ManVec<int> Offsets;
+        for (int i = 0; i < numCells + 1; i++) {
+            Offsets.push_back((i) * 8);
+        }
+        io.writeVectorFirst(Offsets, "Offsets");
+
+        io.writeVectorFirst(connectivity, "Connectivity");
+        io.writeVectorFirst(types, "Types");
+
+        io.openGroup("CellData");
+        io.writeVectorFirst(owner, "owner");
+        io.closeGroup();
+        io.closeGroup();
+
+        io.closeFile();
+    }
+
 };
 
 

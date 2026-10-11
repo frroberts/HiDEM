@@ -67,6 +67,55 @@ public:
     }
 };
 
+class HiDEMParticleDataExt : public HiDEMParticleData {
+public:
+    ManVec<int> flag;
+
+    // stuff used for output, can include garbage data
+    DEVCALLABLE
+    auto getFieldTupleOutput() {
+        return packVecPtrs(
+                xForce,yForce,zForce,uForce,vForce,wForce,
+                iteratedNeighbours, iteratedLinks, flag);
+    }
+
+    DEVCALLABLE
+    void processInitParticle(ElementaryParticle &p, HiDEMParticleDataExt &pData, pInd_t outInd) {
+        pData.xCord[outInd] = p.cord.x;
+        pData.yCord[outInd] = p.cord.y;
+        pData.zCord[outInd] = p.cord.z;
+
+        pData.type[outInd] = p.type;
+        pData.radius[outInd] = p.radius;
+
+        pData.owners[outInd] = p.owner;
+        pData.globalKeys[outInd] = p.globalKey;
+
+        pData.xTheta[outInd] = 0;
+        pData.yTheta[outInd] = 0;
+        pData.zTheta[outInd] = 0;
+
+        pData.xDiff[outInd] = 0;
+        pData.yDiff[outInd] = 0;
+        pData.zDiff[outInd] = 0;
+        pData.uDiff[outInd] = 0;
+        pData.vDiff[outInd] = 0;
+        pData.wDiff[outInd] = 0;
+
+        pData.xForce[outInd] = 0;
+        pData.yForce[outInd] = 0;
+        pData.zForce[outInd] = 0;
+        pData.uForce[outInd] = 0;
+        pData.vForce[outInd] = 0;
+        pData.wForce[outInd] = 0;
+
+        pData.iteratedNeighbours[outInd] = 0;
+        pData.iteratedLinks[outInd] = 0;
+
+        pData.flag[outInd] = 0;
+    }
+};
+
 
 int main(int argc, char *argv[]) {
 
@@ -108,11 +157,16 @@ int main(int argc, char *argv[]) {
     lpReal_t maxLoad = arguments.getArg<lpReal_t>("general.maxLoad").value_or(0.35);
     lpReal_t bendBreak = arguments.getArg<lpReal_t>("general.bendBreak").value_or(0.35);
 
+    lpReal_t meshDrag = arguments.getArg<lpReal_t>("general.meshDrag").value_or(10000000.0);
+    lpReal_t meshForce = arguments.getArg<lpReal_t>("general.meshForce").value_or(10000000.0);
+    lpReal_t meshInteract = arguments.getArg<lpReal_t>("general.meshInteract").value_or(1.0);
+
+
     // ------------------------------------------------
     //           Set up anything related to HiDEMLib
     // ------------------------------------------------
 
-    HiDEMLib<HiDEMParticleData, HiDEMLinkData> hiDem;
+    HiDEMLib<HiDEMParticleDataExt, HiDEMLinkData> hiDem;
     hiDem.setup(arguments, scale);
 
     // missing output arguments
@@ -152,9 +206,9 @@ int main(int argc, char *argv[]) {
 
     // optional things can be used or not
 
-    InputMesh* mesh = hiDem.getCollisionMeshPtr();
+    CollisionMesh* mesh = hiDem.getCollisionMeshPtr();
 
-    mesh->generateAccel(hiDem.geometry.maxRadius*2);
+
 
     ExternalForces *extForcePtr = hiDem.getExternalForcePtr();
 
@@ -171,6 +225,10 @@ int main(int argc, char *argv[]) {
     damping *= scale * scale;
     dampingRotation *= scale * scale;
 
+    meshDrag *= scale * scale;
+    meshForce *= scale * scale;
+    meshInteract *= scale;
+
     lpReal_t lift;
     attractDistance *= scale;
     lift = (rhoWater - rhoIce) / rhoIce * g;
@@ -185,6 +243,8 @@ int main(int argc, char *argv[]) {
     lpReal_t W2 = beamWidth * beamWidth;
     lpReal_t W4 = beamWidth * beamWidth * beamWidth * beamWidth;
     lpReal_t scaleE = E * scale;
+
+    mesh->generateAccel(hiDem.geometry.maxRadius+meshInteract);
 
     // ------------------------------------------------
     //           Functions
@@ -363,7 +423,7 @@ int main(int argc, char *argv[]) {
     };
 
     auto applyForce = [=] DEVCALLABLE(
-            pInd_t pInd, HiDEMParticleData &pData) {
+            pInd_t pInd, HiDEMParticleDataExt &pData) {
         // iterates all particles to move next and prev
         // Compute next positions
         hpReal_t xCord = pData.xCord[pInd];
@@ -408,22 +468,26 @@ int main(int argc, char *argv[]) {
         lpReal_t vForce = pData.vForce[pInd];
         lpReal_t wForce = pData.wForce[pInd];
 
+        pData.flag[pInd] = 0;
 
-        // NOTE!!! this is here more as a demo og how interactions can be done, it it not nessecarily physcially acurate !!!!
-        mesh->closestTriFun(xCord,yCord, zCord, bedInteract, pInd, [&] (int tri, lpReal_t dist){
+        mesh->closestTriFun(xCord,yCord, zCord, bedInteract+pData.radius[pInd], pInd, [&] (int tri, lpReal_t dist){
+            float maxDist = bedInteract+pData.radius[pInd];
             dist = sqrt(dist);
 
-            dragCoeff = lpReal_t(1e+8) * scale * scale;
+            dragCoeff = meshDrag * ((maxDist-dist));
 
-            lpReal_t xForceCol = mesh->dataPtr->xNorm[tri] * (bedStiffness * dist);
-            lpReal_t yForceCol = mesh->dataPtr->yNorm[tri] * (bedStiffness * dist);
-            lpReal_t zForceCol = mesh->dataPtr->zNorm[tri] * (bedStiffness * dist);
 
-            mesh->addForce(tri, xForceCol, yForceCol, zForceCol);
+            lpReal_t xForceCol = - mesh->dataPtr->xNorm[tri] * (maxDist-dist) * meshForce;
+            lpReal_t yForceCol = - mesh->dataPtr->yNorm[tri] * (maxDist-dist) * meshForce;
+            lpReal_t zForceCol = - mesh->dataPtr->zNorm[tri] * (maxDist-dist) * meshForce;
+
+            mesh->addForceToFace(tri, xForceCol, yForceCol, zForceCol);
 
             xForce += xForceCol;
             yForce += yForceCol;
             zForce += zForceCol;
+
+            pData.flag[pInd] = dragCoeff;
         });
 
         lpReal_t particleMass = rhoIce * diameter * diameter * diameter;
@@ -560,7 +624,6 @@ int main(int argc, char *argv[]) {
     //           Iteration loop
     // ------------------------------------------------
 
-    devProfilerStart();
 
     MPI_Barrier(MPI_COMM_WORLD);
 
@@ -578,22 +641,24 @@ int main(int argc, char *argv[]) {
             hiDem.computeIteratedNeighbours(pData.iteratedNeighbours);
 
             hiDem.snapshotParticles(std::make_tuple(
-                                            "iteratedNeighbours", "iteratedLinks"),
-                                    packVecPtrs(pData.iteratedNeighbours, pData.iteratedLinks));
+                                            "iteratedNeighbours", "iteratedLinks", "flag"),
+                                    packVecPtrs(pData.iteratedNeighbours, pData.iteratedLinks, pData.flag));
 
             hiDem.snapshotLinks(std::make_tuple(
                                         "state", "keyEndA", "keyEndB", "globalKey"),
-                                packVecPtrs(lData.state, lData.globalKeyEndA, lData.globalKeyEndA,
+                                packVecPtrs(lData.state, lData.globalKeyEndA, lData.globalKeyEndB,
                                             lData.globalKeys));
 
             hiDem.snapshotMesh(std::make_tuple(
                                        "xFaceForce", "yFaceForce", "zFaceForce"),
                                packVecsDataPtrs(mesh->dataPtr->xFaceForce, mesh->dataPtr->yFaceForce,
                                                 mesh->dataPtr->zFaceForce));
+
         }
         hiDem.gridService();
 
         RangeV2 r("timestep", 1);
+    devProfilerStart();
 
         hiDem.computePartForce(neighbourForceFunc, linkForceFunc,
                                packVecPtrs(pData.xDiff, pData.yDiff, pData.zDiff,
@@ -615,9 +680,10 @@ int main(int argc, char *argv[]) {
         }
 
         hiDem.finalizeTs();
+    devProfilerStop();
+
     }
 
-    devProfilerStop();
 
     auto iterEnd = std::chrono::steady_clock::now();
     std::chrono::duration<double> elapsedIter = iterEnd - iterStart;

@@ -41,8 +41,7 @@ add_library(PLiB STATIC
         Geometry/MapLoader.cpp
         Geometry/MapLoader.h
         ExternalForces.h
-        Geometry/InputMesh.h
-        Geometry/InputMesh.cpp
+        Geometry/BoundingMesh.h
         Util/OwnedListGen.h
         Generators/BlockParticleGenerator.h
         Generators/ParticleGenerator.h
@@ -60,6 +59,7 @@ add_library(PLiB STATIC
         Accel/CombinedAccelSIMD.h
         Transport/CommunicatorPacked.h
         Util/GPUSelect.h
+        Generators/FileParticleGenerator.h
 )
 
 if(ENABLE_OMP)

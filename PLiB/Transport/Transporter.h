@@ -159,6 +159,7 @@ public:
     void transmitFiledsFull(int recvStartOffset, FieldT fieldTuple,
                             std::vector<TransportTargetV2> &targetsOut,
                             std::vector<TransportTargetV2> &targetsIn) {
+        xvtxRangePush("tranmit field");
         RangeV2 r6("tranmit field", 3);
 
         std::vector<MPI_Request> requests;
@@ -204,8 +205,8 @@ public:
                 ManVec<T, PinnedAllocator<T>> hostBuff;
                 ManVec<T, ScratchAllocator<T>> devBuff;
 
-                hostBuff.resize(targetsOut[t].count);
-                devBuff.resize(targetsOut[t].count);
+                hostBuff.resize(targetsOut[t].count, false);
+                devBuff.resize(targetsOut[t].count, false);
 
                 Iterator::gather(OffloadExec(), devBuff.data(), ptr->data(), targetsOut[t].indexesPtr, targetsOut[t].count);
 
@@ -220,7 +221,7 @@ public:
 
 #else
                 ManVec<T, PinnedAllocator<T>> hostBuff;
-                hostBuff.resize(targetsOut[t].count);
+                hostBuff.resize(targetsOut[t].count, false);
                 Iterator::gather(OffloadExec(), hostBuff.data(), ptr->data(), targetsOut[t].indexesPtr, targetsOut[t].count);
 
                 Iterator::syncAll();
@@ -237,17 +238,14 @@ public:
         MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
 
         callForTuple2Elem(fieldTuple, inPtrs, [&]<typename T>(ManVec<T> *outPtr, T *buffPtr) {
-#if defined(GPU)
-            getErrorDevApi(devMemcpy(&(outPtr->data()[recvStartOffset]), buffPtr, bufferSize*sizeof(T), devMemcpyDefault));
-#else
-            std::memcpy(&(outPtr->data()[recvStartOffset]), buffPtr, bufferSize * sizeof(T));
-#endif
-
+            Iterator::copy(&(outPtr->data()[recvStartOffset]), buffPtr, bufferSize * sizeof(T));
         });
 
         callForTupleElem(inPtrs, [&]<typename T>(T *&ptr) {
             delete[] ptr;
         });
+
+        xvtxRangePop();
 
     }
 

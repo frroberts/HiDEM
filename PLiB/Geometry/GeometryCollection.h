@@ -11,7 +11,8 @@
 
 #include "Map2dLoader.h"
 #include "InputGeometry.h"
-#include "InputMesh.h"
+#include "CollisionMesh.h"
+#include "BoundingMesh.h"
 #include "../MeshData.h"
 #include "../Util/ArgParser.h"
 #include "../Util/TomlParser.h"
@@ -40,8 +41,8 @@ public:
     MeshData *collisionMeshData;
     MeshData *geometryMeshData;
     std::map<std::string, Map2dLoader> mapLoaders;
-    std::map<std::string, std::shared_ptr<InputMesh>> boundingMeshes;
-    std::map<std::string, std::shared_ptr<InputMesh>> collisionMeshes;
+    std::map<std::string, std::shared_ptr<BoundingMesh>> boundingMeshes;
+    std::map<std::string, std::shared_ptr<CollisionMesh>> collisionMeshes;
     std::map<std::string, std::shared_ptr<InputGeometry>> allGeometries;
     // should return the geometry once done
     std::shared_ptr<InputGeometry> generateCompound(std::string inputStr);
@@ -49,9 +50,7 @@ public:
 
     std::shared_ptr<InputBed> createBed(Map2d<lpReal_t> *bed, Map2d<lpReal_t> *friction);
 
-    std::shared_ptr<InputMesh>
-    createMesh(std::string name, std::string objPath, Real3 scale, Real3 position, lpReal_t shellScale,
-               MeshData *meshData);
+    void fillMesh(Mesh *geom, std::string name, std::string objPath, Real3 scale, Real3 position, MeshData *meshData, bool flipNormal);
 
     std::shared_ptr<InputBox> createBox(Real3 lower, Real3 upper);
 
@@ -59,7 +58,11 @@ public:
 
     void buildFromConfig(ArgParser &parser);
 
-    void parseGeometryTable(std::vector<toml::table> geometry, std::map<std::string, std::shared_ptr<InputMesh>> &geometries, MeshData *meshData);
+    void setOffset(Real3 offset);
+
+    void parseGeometryTable(std::vector<toml::table> geometry);
+
+    void parseCollisionTable(std::vector<toml::table> geometry);
 
     std::optional<std::shared_ptr<InputBed>> getBed(){
         return bed;
@@ -68,15 +71,15 @@ public:
         return collisionMeshData;
     }
 
-    std::optional<InputMesh *> getColMeshData() {
+    std::optional<CollisionMesh *> getColMeshData() {
         if (collisionMeshData->numMehses <= 1)
             return {};
-        InputMesh *mesh = new InputMesh();
+        CollisionMesh *mesh = new CollisionMesh();
 
         mesh->dataPtr = collisionMeshData;
         mesh->meshId = 0;
-        mesh->cellSizeScale = meshCellSizeScale;
-        mesh->rangeFactor = meshRangeFactor;
+        // mesh->cellSizeScale = meshCellSizeScale;
+        // mesh->rangeFactor = meshRangeFactor;
         mesh->accel = new MeshAccel();
 
         return mesh;

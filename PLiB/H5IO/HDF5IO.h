@@ -299,8 +299,14 @@ public:
         auto propertyList = H5Pcreate(H5P_DATASET_XFER);
         checkH5Error(H5Pset_dxpl_mpio(propertyList, transferType));
 
-        checkH5Error(H5Dwrite(datasetID, getH5Type<T>(), memSpace, fileSpace,
-                               propertyList, data));
+#ifdef MITIGATE_HDF5_DEV_WRITE_ISSUE
+        std::vector<T> vecData;
+        vecData.resize(span.localCount);
+        Iterator::copy(vecData.data(), data, span.localCount*sizeof(T));
+        checkH5Error(H5Dwrite(datasetID, getH5Type<T>(), memSpace, fileSpace,propertyList, vecData.data()));
+#else
+        checkH5Error(H5Dwrite(datasetID, getH5Type<T>(), memSpace, fileSpace,propertyList, data));
+#endif
 
         checkH5Error(H5Dclose(datasetID));
         checkH5Error(H5Sclose(memSpace));
@@ -376,7 +382,15 @@ public:
         auto propertyList = H5Pcreate(H5P_DATASET_XFER);
         checkH5Error(H5Pset_dxpl_mpio(propertyList, transferType));
 
+#ifdef MITIGATE_HDF5_DEV_WRITE_ISSUE
+        std::vector<T> vecData;
+        vecData.resize(localCount);
+        Iterator::copy(vecData.data(), data.data(), localCount*sizeof(T));
+        checkH5Error(H5Dwrite(datasetID, getH5Type<T>(), memSpace, fileSpace,propertyList, vecData.data()));
+#else
         checkH5Error(H5Dwrite(datasetID, getH5Type<T>(), memSpace, fileSpace,propertyList, data.data()));
+#endif
+
         checkH5Error(H5Dclose(datasetID));
         checkH5Error(H5Sclose(fileSpace));
         checkH5Error(H5Sclose(memSpace));
@@ -410,13 +424,13 @@ public:
             fieldCount++;
         }
     }
-
+/*
     template<class T>
     void writeDataFileShape(T *data, std::string name, HDF5Span span) {
         //
         hid_t target = getTarget();
         hid_t fileSpace;
-        hid_t memSpace;      /* file and memory dataspace identifiers */
+        hid_t memSpace;
 
         fileSpace = H5Screate_simple(1, &span.globalCount, NULL);
 
@@ -434,14 +448,13 @@ public:
         // Create property list for collective dataset write.
         auto propertyList = H5Pcreate(H5P_DATASET_XFER);
         checkH5Error(H5Pset_dxpl_mpio(propertyList, transferType));
-
         checkH5Error(H5Dwrite(datasetID, getH5Type<T>(), memSpace, fileSpace, propertyList, data));
 
         checkH5Error(H5Dclose(datasetID));
         checkH5Error(H5Sclose(memSpace));
         checkH5Error(H5Pclose(propertyList));
     }
-
+*/
     void writeSpan(HDF5Span span, std::string prefix = ""){
         int worldSize;
         MPI_Comm_size(comm, &worldSize);
@@ -577,6 +590,13 @@ public:
         checkH5Error(H5Sclose(fileSpace));
         checkH5Error(H5Sclose(memSpace));
         checkH5Error(H5Pclose(propertyList));
+    }
+
+    size_t getDataSetSize(std::string name) {
+        hid_t target = getTarget();
+        auto datasetID = H5Dopen1(target, name.c_str());
+        hsize_t size = H5Sget_simple_extent_npoints(H5Dget_space(datasetID));
+        return size;
     }
 
 

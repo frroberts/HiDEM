@@ -21,10 +21,8 @@ add_library(HiDEMLib STATIC
         HiDEMParticleData.h
         HiDEMLinkData.h
         HiDEMDistribution.h
-        HiDEMDistribution.cpp
         HiDEMGlobal.h
         HiDEMH5Checkpoint.h
-        HiDEMH5Checkpoint.cpp
         ../PLiB/Accel/CombinedAccelSmem.h
         ../PLiB/Accel/LinkAccelSide.h
         ../PLiB/Accel/CombinedAccel.h
@@ -38,8 +36,6 @@ add_library(HiDEMLib STATIC
 if (ENABLE_CUDA)
     set_source_files_properties(
             HiDEMLinkData.h
-            HiDEMDistribution.cpp
-            HiDEMH5Checkpoint.cpp
             HiDEMGeometry.cpp
 
             PROPERTIES LANGUAGE CUDA)
@@ -53,8 +49,6 @@ elseif (ENABLE_HIP)
 
     set_source_files_properties(
             HiDEMLinkData.h
-            HiDEMDistribution.cpp
-            HiDEMH5Checkpoint.cpp
             HiDEMGeometry.cpp
 
             PROPERTIES LANGUAGE HIP)

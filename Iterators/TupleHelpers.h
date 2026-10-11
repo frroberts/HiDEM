@@ -215,7 +215,21 @@ auto zipTuples(std::tuple<ArgsA ...> tupA, std::tuple<ArgsB...> tupB) {
     return zipTuplesImpl(tupA, tupB, std::make_index_sequence<sizeof...(ArgsA)>());
 }
 
+template<std::size_t... ints, class ...Args>
+DEVCALLABLE
+void loadStorePtrTupleImpl(int outputInd, const std::tuple<Args * ...> &outputPtr, int inputInd,
+    const std::tuple<Args * ...> &inputPtrs, std::integer_sequence<std::size_t, ints...>) {
 
+    ((std::get<ints>(outputPtr)[outputInd] = (std::get<ints>(inputPtrs)[inputInd])), ...);
+}
+
+template<class ...Args>
+DEVCALLABLE
+void loadStorePtrTuple(int outputInd, const std::tuple<Args * ...> &outputPtr, int inputInd,
+    const std::tuple<Args * ...> &inputPtrs) {
+    loadStorePtrTupleImpl(outputInd, outputPtr, inputInd, inputPtrs, std::make_index_sequence<sizeof...(Args)>());
+
+}
 
 
 // make a lambda in zero
@@ -232,6 +246,17 @@ std::tuple<Args...> zeroTuple(std::tuple<Args *...> args) {
     }, args);
 }
 
+template<class T>
+T getDefaultInitFromPtr(T *arg) {
+    return T();
+}
+template<class ...Args>
+std::tuple<Args...> defaultInitTuple(std::tuple<Args *...> args) {
+    return std::apply([=](auto ...x) {
+        return std::make_tuple(getDefaultInitFromPtr(x)...);
+    }, args);
+}
+
 template<class ...Vec>
 DEVCALLABLE
 auto packVecsDataPtrs(Vec& ... vecs){
@@ -244,6 +269,17 @@ auto packVecPtrs(Vec& ... vecs){
     return std::make_tuple(&vecs...);
 }
 
+template<std::size_t... ints, class ...Args>
+auto vecTupVecDataPtrImpl(std::tuple<Args ...> ptrs, std::integer_sequence<std::size_t, ints...>) {
+    return std::apply([&](Args ...x) {
+        return std::make_tuple((x).data()...);
+    }, ptrs);
+}
+
+template<class ...Vec>
+auto vecTupVecDataPtr(std::tuple<Vec ...> vecs){
+    return vecTupVecDataPtrImpl(vecs, std::make_index_sequence<std::tuple_size<std::tuple<Vec ...>>{}>());
+}
 
 template<std::size_t... ints, class ...Args>
 auto vecPtrToDataPtrImpl(std::tuple<Args ...> ptrs, std::integer_sequence<std::size_t, ints...>) {

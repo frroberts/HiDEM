@@ -40,29 +40,7 @@ public:
     }
 
 
-    template<typename T>
-    void splitString(const std::string &input, const std::regex &splitExpr, T fun)
-    {
-        auto begin = std::sregex_iterator(input.begin(), input.end(), splitExpr);
-        auto end = std::sregex_iterator();
 
-        for (std::sregex_iterator i = begin; i != end; ++i) {
-            std::string str = i->str();
-            fun(str);
-        }
-    }
-
-    template<typename T>
-    void splitStringDelims(const std::string &input, std::string delims, T fun) {
-        std::size_t prev = 0, pos;
-        while ((pos = input.find_first_of(delims, prev)) != std::string::npos) {
-            if (pos > prev)
-                fun(input.substr(prev, pos - prev));
-            prev = pos + 1;
-        }
-        if (prev < input.length())
-            fun(input.substr(prev, std::string::npos));
-    }
 };
 
 

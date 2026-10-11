@@ -7,7 +7,7 @@
 
 #include <Geometry/MeshLoader.h>
 #include <Geometry/InputGeometry.h>
-#include <Geometry/InputMesh.h>
+#include <Geometry/BoundingMesh.h>
 #include "Geometry/GeometryCollection.h"
 
 

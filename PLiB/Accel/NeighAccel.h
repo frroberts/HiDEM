@@ -62,7 +62,7 @@ public:
 
         numPraticlesAllocated = pData.numLocal;
 
-        interateBlocks(grid, pData, interactDist, [] DEVCALLABLE (pInd_t pInd, pInd_t nInd, NeighAccel &nList, int &neighbours) {
+        iterateBlocks(grid, pData, interactDist, [] DEVCALLABLE (pInd_t pInd, pInd_t nInd, NeighAccel &nList, int &neighbours) {
             nList.setPartNeighId(neighbours, pInd, nInd);
             neighbours++;
         });
@@ -115,13 +115,15 @@ public:
             nList.numNeighs[i] = 0;
         }, pData.numLocal, *this);
 
-        interateBlocks(grid, pData, interactDist, [] DEVCALLABLE (pInd_t pInd, pInd_t nInd, NeighAccel &nList, int &neighbours) {
+        iterateBlocks(grid, pData, interactDist, [] DEVCALLABLE (pInd_t pInd, pInd_t nInd, NeighAccel &nList, int &neighbours) {
             neighbours++;
         });
     }
 
     template<class Fun>
-    void interateBlocks(NeighbourGrid &grid, ParticleData &pData, double interactDist, Fun nFunc) {
+    void iterateBlocks(NeighbourGrid &grid, ParticleData &pData, double interactDist, Fun nFunc) {
+        double interactDist2 = interactDist*interactDist;
+
         pData.iterateOwnedParticles(OffloadExec(), [=] DEVCALLABLE(pInd_t pInd, ParticleData &pData, NeighbourGrid &grid, NeighAccel &nList) {
             //
             int neighbours = 0;
@@ -159,7 +161,8 @@ public:
                     double zDist = zCord - zCordOther;
                     double zDist2 = zDist * zDist;
 
-                    double particleDistance = sqrt(xDist2 + yDist2 + zDist2);
+                    double particleDistance2 = xDist2 + yDist2 + zDist2;
+                    double particleDistance = sqrt(particleDistance2);
                     double radSum = pData.radius[pInd] + pData.radius[nInd];
                     double dist = particleDistance - radSum;
 

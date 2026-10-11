@@ -150,7 +150,7 @@ public:
             for (int j = lowerYInt; j < upperYInt; ++j) {
                 for (int i = lowerXInt; i < upperXInt; ++i) {
 
-                    std::vector<ElementaryParticle> particlesLocal;
+                    ManVec<ElementaryParticle> particlesLocal;
                     for (auto &p: unitCell) {
                         //
                         Real3 cord = p.cord + (blockSize * Real3{double(i), double(j), double(k)}) + offset;

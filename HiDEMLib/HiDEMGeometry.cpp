@@ -9,12 +9,15 @@
 
 #include "Generators/BlockParticleGenerator.h"
 #include "Generators/FCCParticleGenerator.h"
+#include "Generators/HCPParticleGenerator.h"
+#include "Generators/FileParticleGenerator.h"
 #include "Geometry/MapLoader.h"
 #include "Util/ArgParser.h"
 
 
 ManVec<ElementaryParticle> HiDEMGeometry::generateParticles(Domain ownDomain) {
     ManVec<ElementaryParticle> particles;
+
     pGenPtr->generate(ownDomain, boundingGeometries, particleGenerateProbabilities, offset, particles);
 
     return particles;
@@ -84,10 +87,20 @@ void HiDEMGeometry::setupLattice(double scale, const toml::value &tomlTable) {
     if (pGenType == "FCC") {
         double spacing = toml::find<double>(latticeBase, "fccSpacing") * scale;
         double radius = toml::find<double>(latticeBase, "particleRadius") * scale;
+        Real3 originCoordinate = TomlParser::getReal3Opt(latticeBase, "originCoordinate", lowerLimit);
+        Real3 fccRotation = TomlParser::getReal3Opt(latticeBase, "fccRotation", {0,0,0});
+
         maxRadius = radius;
 
         pGenPtr = std::make_shared<FCCParticleGenerator>(lowerLimit, upperLimit, spacing,
-                                                         radius);
+                                                         radius, originCoordinate, fccRotation);
+    } else if (pGenType == "HCP") {
+        double radius = toml::find<double>(latticeBase, "particleRadius") * scale;
+        Real3 originCoordinate = TomlParser::getReal3Opt(latticeBase, "originCoordinate", lowerLimit);
+
+        maxRadius = radius;
+
+        pGenPtr = std::make_shared<HCPParticleGenerator>(lowerLimit, upperLimit, radius, originCoordinate);
     } else if (pGenType == "Block") {
         auto blockGen = std::make_shared<BlocParticleGenerator>(
             lowerLimit, upperLimit, scale, toml::find<double>(latticeBase, "blockSize") * scale);
@@ -96,6 +109,19 @@ void HiDEMGeometry::setupLattice(double scale, const toml::value &tomlTable) {
         blockGen->loadUnitCell(path);
         maxRadius = blockGen->maxRad * scale;
         pGenPtr = blockGen;
+    } else if (pGenType == "File") {
+        //
+        std::string path = toml::find<std::string>(latticeBase, "path");
+        std::cout << path << std::endl;
+        std::string xCord = toml::find_or<std::string>(latticeBase, "xCords", "xCord");
+        std::string yCord = toml::find_or<std::string>(latticeBase, "yCords", "yCord");
+        std::string zCord = toml::find_or<std::string>(latticeBase, "zCords", "zCord");
+        std::string radius = toml::find_or<std::string>(latticeBase, "radius", "radius");
+
+        auto fileGen = std::make_shared<FileParticleGenerator>(path, xCord, yCord, zCord, radius);
+        maxRadius = toml::find<double>(latticeBase, "particleRadius") * scale;
+
+        pGenPtr = fileGen;
     } else {
         std::cout << "please specify lattice type" << std::endl;
         exit(1);
@@ -123,39 +149,50 @@ void HiDEMGeometry::setupLimits(ArgParser &parser) {
 
     if (xInputLower) {
         lowerLimit.x = xInputLower.value();
-        Logger::writeAtFirst("constraining xInputLower");
+        Logger::writeAtFirst("constraining xInputLower\n");
     }
     if (yInputLower) {
         lowerLimit.y = yInputLower.value();
-        Logger::writeAtFirst("constraining yInputLower");
+        Logger::writeAtFirst("constraining yInputLower\n");
     }
     if (zInputLower) {
         lowerLimit.z = zInputLower.value();
-        Logger::writeAtFirst("constraining zInputLower");
+        Logger::writeAtFirst("constraining zInputLower\n");
     }
     if (xInputUpper) {
         upperLimit.x = xInputUpper.value();
-        Logger::writeAtFirst("constraining xInputUpper");
+        Logger::writeAtFirst("constraining xInputUpper\n");
     }
     if (yInputUpper) {
         upperLimit.y = yInputUpper.value();
-        Logger::writeAtFirst("constraining yInputUpper");
+        Logger::writeAtFirst("constraining yInputUpper\n");
     }
     if (zInputUpper) {
         upperLimit.z = zInputUpper.value();
-        Logger::writeAtFirst("constraining zInputUpper");
+        Logger::writeAtFirst("constraining zInputUpper\n");
     }
-    zeroCenter = parser.getArg<bool>("general.zeroCenter").value_or(false);
+    zeroCenter = parser.getArg<bool>("lattice.zeroCenter").value_or(false);
 
     // todo zero center here ?
     Real3 center = (lowerLimit + upperLimit) / Real3(2.0);
     if (zeroCenter) {
         //
-        std::cout << "center " << center.x << " " << center.y << " " << center.z << " " << std::endl;
+        Logger::writeAtFirst(fmt::format("zero center offset {},{},{}\n", center.x, center.y, center.z));
+        // std::cout << " -- -- -- center " << center.x << " " << center.y << " " << center.z << " " << std::endl;
         center.z = 0;
-        setOffset(center);
+        geomCollection.setOffset(center);
+        // setOffset(center);
 
         lowerLimit = lowerLimit - center;
         upperLimit = upperLimit - center;
+
+        for (auto prob: linkGenerateProbabilities)
+        {
+            prob->setOffset(center.x, center.y);
+        }
+        for (auto prob: particleGenerateProbabilities)
+        {
+            prob->setOffset(center.x, center.y);
+        }
     }
 }

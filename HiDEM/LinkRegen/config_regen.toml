@@ -37,7 +37,7 @@ breakTime = 0.0
 # number of iterations to run
 timeSteps = 600000
 # interval of how often to output
-outputInterval = 100
+outputInterval = 1000
 
 [externalForce]
 # external forces to be applied each time step
@@ -153,3 +153,11 @@ path = "../HiDEM/MeshBlock/wedge.obj"
 scale= [300,300,300]
 position = [0,0,330]
 shellScale = 0.0
+
+[[collisionGeometry]]
+# mandatory to have one bed geometry
+type = "bed"
+name = "bed"
+path = "../HiDEM/GlacierDem/dem.csv"
+baseFieldID = 3
+frictionFieldID = 4

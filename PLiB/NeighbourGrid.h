@@ -16,6 +16,7 @@
 #include "../Iterators/ParallelScan.h"
 #include "../Iterators/ParallelSort.h"
 #include "../Iterators/ParallelReduce.h"
+#include "H5IO/HDF5IO.h"
 
 
 class NeighbourGrid : public ManagedParent {
@@ -56,7 +57,7 @@ public:
     #endif
 
 
-    int totalCells;
+    int totalCells = 0;
     double gridSpacing;
     NeighbourGrid() {
 
@@ -64,10 +65,14 @@ public:
 
 
     void generate(ParticleData &pData, double searchDistance){
+        xvtxRangePush("grid rege");
+
         gridSpacing = searchDistance;
         generateNeighbourGrid(pData);
         colourParticles(pData);
         generateIterationList(pData);
+
+        xvtxRangePop();
     }
 
     DEVCALLABLE
@@ -136,6 +141,103 @@ public:
                 }
             }
         }
+    }
+
+    void toVTKHDF(std::string fileName) {
+        HDF5IO io;
+        io.createFile(fileName, MPI_COMM_WORLD);
+
+        io.openGroup("VTKHDF");
+        io.writeAttributeStr("Type", "UnstructuredGrid");
+        std::vector<long long int> version = {2, 2};
+        io.writeAttributeArr("Version", version);
+
+        ManVec<hpReal_t> points;
+        ManVec<int> connectivity;
+        ManVec<unsigned char> types;
+        ManVec<int> cellLoad;
+
+        int conn = 0;
+        int numCells = 0;
+        Iterator::iterate3D(SerialExec(), [&] (int x, int y, int z, NeighbourGrid &grid) {
+            int gridColor = grid.getGridColor(x, y, z);
+
+            cellLoad.push_back(grid.bucketSizes[gridColor]);
+
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            connectivity.push_back(conn++);
+            types.push_back(11);
+            numCells++;
+
+            points.push_back(grid.xMin + (x * grid.gridSpacing));
+            points.push_back(grid.yMin + (y * grid.gridSpacing));
+            points.push_back(grid.zMin + (z * grid.gridSpacing));
+
+            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
+            points.push_back(grid.yMin + (y * grid.gridSpacing));
+            points.push_back(grid.zMin + (z * grid.gridSpacing));
+
+            points.push_back(grid.xMin + (x * grid.gridSpacing));
+            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
+            points.push_back(grid.zMin + (z * grid.gridSpacing));
+
+            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
+            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
+            points.push_back(grid.zMin + (z * grid.gridSpacing));
+
+            points.push_back(grid.xMin + (x * grid.gridSpacing));
+            points.push_back(grid.yMin + (y * grid.gridSpacing));
+            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
+
+            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
+            points.push_back(grid.yMin + (y * grid.gridSpacing));
+            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
+
+            points.push_back(grid.xMin + (x * grid.gridSpacing));
+            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
+            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
+
+            points.push_back(grid.xMin + ((x + 1) * grid.gridSpacing));
+            points.push_back(grid.yMin + ((y + 1) * grid.gridSpacing));
+            points.push_back(grid.zMin + ((z + 1) * grid.gridSpacing));
+
+        }, xGridSize, yGridSize, zGridSize, *this);
+        Iterator::syncAll();
+
+        io.writeVectorAll2D(points, "Points", 3);
+        ManVec<long long int> NumberOfPoints;
+        NumberOfPoints.push_back(points.size()/3);
+        io.writeVectorFirst(NumberOfPoints, "NumberOfPoints");
+
+        ManVec<int> NumberOfConnectivityIds;
+        NumberOfConnectivityIds.push_back(numCells * 8);
+        io.writeVectorFirst(NumberOfConnectivityIds, "NumberOfConnectivityIds");
+
+        ManVec<int> NumberOfCells;
+        NumberOfCells.push_back(numCells);
+        io.writeVectorFirst(NumberOfCells, "NumberOfCells");
+
+        ManVec<int> Offsets;
+        for (int i = 0; i < numCells + 1; i++) {
+            Offsets.push_back((i) * 8);
+        }
+        io.writeVectorFirst(Offsets, "Offsets");
+
+        io.writeVectorFirst(connectivity, "Connectivity");
+        io.writeVectorFirst(types, "Types");
+
+        io.openGroup("CellData");
+        io.writeVectorFirst(cellLoad, "numParticles");
+        io.closeGroup();
+        io.closeGroup();
+
+        io.closeFile();
     }
 };
 

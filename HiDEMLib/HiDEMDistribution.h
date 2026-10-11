@@ -5,24 +5,6 @@
 #ifndef PHELL_DISTRIBUTION_H
 #define PHELL_DISTRIBUTION_H
 
-/*
- *    //
-// Created by Fredrik Robertsen on 24/01/2021.
-//
-
-#include <random>
-
-#include "HiDEMDistribution.h"
-#include "../PLiB/DomainBuilder.h"
-
-#include <../PLiB/Logger/Logger.h>
-
-#include <Transport/LinkTransporter.h>
-#include <Transport/ParticleTransporter.h>
-
-#include "LinkDataHandler.h"
-
- */
 #include <memory>
 #include <World.h>
 #include "HiDEMParticleData.h"
@@ -60,7 +42,6 @@ public:
     NeighbourGrid *grids[4];
     bool allocated = false;
 
-public:
     World world;
 
     HiDEMDistribution(const HiDEMDistribution &old_obj) = delete;
@@ -78,7 +59,7 @@ public:
     };
 
     void syncCT(LDataT &lData, GlobalLocalMapper<gKey_t, lInd_t> &lMapper) {
-        //nvtxRangePush("CT sync links");
+        //xvtxRangePush("CT sync links");
         // syncAll up CT from all halos
 
         lCTComm.initFromTransporter(*lTrans);
@@ -101,7 +82,7 @@ public:
 
         lCTComm.unpackAllCommData(packVecPtrs(lData.CT0_flat, lData.CT1_flat, lData.CT2_flat, lData.CT3_flat, lData.CT4_flat, lData.CT5_flat));
         Iterator::syncAll();
-        //nvtxRangePop();
+        //xvtxRangePop();
     }
 
     HiDEMDistribution(bool reBalance, double searchDistance) : reBalanceActive(reBalance) {
@@ -147,8 +128,9 @@ public:
 
         // possibly reorder particle stuff here ?
         lTrans->getIncomming(lData);
-        lData.dropNonOwnedLinks();
-        lData.dropBrokenLinks();
+        //lData.dropNonOwnedLinks();
+        //lData.dropBrokenLinks();
+        lData.dropBrokenNonOwnedLinks();
 
         // possibly reorder link stuff here ?
         r3.end();
@@ -172,6 +154,8 @@ public:
         RangeV2 r5("sort order", 3);
 
         for (int i = 0; i < 4; i++) {
+            // clear total cells after redist to avoid stray warnings
+            grids[i]->totalCells = 0;
             grids[i]->generateNeighbourGrid(pData);
             grids[i]->colourParticles(pData);
         }

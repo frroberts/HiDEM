@@ -57,12 +57,22 @@ public:
             sideOutTargets[i].offset = outTargets[i].offset * 2;
             sideOutTargets[i].indexesPtr = sideIndexesOut.data() + sideOutTargets[i].offset;
 
+            auto indexPtr = outTargets[i].indexesPtr;
+            auto sideOutPtr = sideOutTargets[i].indexesPtr;
+            Iterator::iterate(OffloadExec(), [=]DEVCALLABLE (int j, LinkDataT &lData) {
+                int ind = indexPtr[j];
+                sideOutPtr[(j * 2)] = lData.sideIndEndA[ind];
+                sideOutPtr[(j * 2) + 1] = lData.sideIndEndB[ind];
+            }, outTargets[i].count, lData);
+            /*
             for (int j = 0; j < outTargets[i].count; j++) {
                 int ind = outTargets[i].indexesPtr[j];
                 sideOutTargets[i].indexesPtr[(j * 2)] = lData.sideIndEndA[ind];
                 sideOutTargets[i].indexesPtr[(j * 2) + 1] = lData.sideIndEndB[ind];
             }
+            */
         }
+        Iterator::syncAll();
 
         for (int i = 0; i < inTargets.size(); i++) {
             sideInTargets[i].count = 2 * inTargets[i].count;

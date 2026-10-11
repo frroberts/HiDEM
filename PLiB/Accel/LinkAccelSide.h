@@ -65,8 +65,28 @@ public:
         Iterator::syncAll();
     }
 
+    int getMaxLinksPerParticle( LinkData &lData, pInd_t numParticles) {
+        linksPerParticle.resize(numParticles);
+        auto linksPerParticlePtr = linksPerParticle.data();
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (pInd_t i) {
+            linksPerParticlePtr[i] = 0;
+        }, numParticles);
+        auto *localPartIndAPtr = lData.localPartIndA.data();
+        auto *localPartIndBPtr = lData.localPartIndB.data();
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (lInd_t i) {
+            pInd_t pIndA = localPartIndAPtr[i];
+            pInd_t pIndB = localPartIndBPtr[i];
+            Atomic::atomicIncVal(linksPerParticlePtr[pIndA]);
+            Atomic::atomicIncVal(linksPerParticlePtr[pIndB]);
+        },lData.numLocal);
+        Iterator::syncAll();
+        auto elem = stx::max_element(EXECPOLICY linksPerParticle.begin(), linksPerParticle.end() );
+        return *elem;
+    }
+
+
     void generateLinks(ParticleData &pData, LinkData &lData) {
-        allocatedMaxLinks = lData.getMaxLinksPerParticle(pData.numLocal);
+        allocatedMaxLinks = getMaxLinksPerParticle(lData, pData.numLocal);
         linksPerParticle.resize(pData.numLocal);
         numPraticlesAllocated = pData.numLocal;
         particleLinkId.resize(allocatedMaxLinks * numPraticlesAllocated);
@@ -239,9 +259,7 @@ public:
     particleSarts.resize(numParticles + 1, false);
     particleSarts[0] = 0;
 
-            // todo replace with something parallel
-            stx::inclusive_scan(EXECPOLICY this->linksPerParticle.begin(), this->linksPerParticle.end(), particleSarts.begin() + 1);
-    // std::partial_sum(this->linksPerParticle.begin(), this->linksPerParticle.end(), particleSarts.begin() + 1);
+    stx::inclusive_scan(EXECPOLICY this->linksPerParticle.begin(), this->linksPerParticle.end(), particleSarts.begin() + 1);
 
     auto pStartPtr = particleSarts.data();
     auto newOrderPtr = newOrder.data();

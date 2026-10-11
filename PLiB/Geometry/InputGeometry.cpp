@@ -17,8 +17,9 @@ bool InputDEM::withinGeometry(Real3 cord, lpReal_t radius) {
 }
 
 void InputDEM::setOffset(Real3 offset) {
-
-    // need to figure out how to set this offset for z as well ?
+    this->offset = offset;
+    base->setOffset(offset.x, offset.y);
+    surface->setOffset(offset.x, offset.y);
 }
 
 auto InputDEM::getLimits() -> std::tuple<Real3, Real3> {
@@ -57,8 +58,9 @@ void InputDEM::toVTKHDF(std::string path) {
 
 void InputBox::setOffset(Real3 offset) {
 
-    lower = lower + offset;
-    upper = upper + offset;
+    this->offset = offset;
+    lower = lower - offset;
+    upper = upper - offset;
 }
 
 auto InputBox::getLimits() -> std::tuple<Real3, Real3> {
@@ -83,6 +85,10 @@ bool InputBed::withinGeometry(Real3 cord, lpReal_t radius) {
 
 void InputBed::setOffset(Real3 offset) {
 
+    this->offset = offset;
+
+    bed->setOffset(offset.x, offset.y);
+    friction->setOffset(offset.x, offset.y);
 }
 
 auto InputBed::getLimits() -> std::tuple<Real3, Real3> {

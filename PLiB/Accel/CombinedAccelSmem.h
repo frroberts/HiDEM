@@ -103,55 +103,71 @@ public:
 #endif
     }
 
-    template<class T>
-    void generatePrePostCommIndexes(ParticleData &pData, LinkData &lData, T &comm) {
+    template <class T>
+    void generatePrePostCommIndexes(ParticleData& pData, LinkData& lData, T& comm) {
+        xvtxRangePush("generatePrePostCommIndexes");
 #ifdef ENABLE_ASYNC_COMM
-        preCommIndexes.clear();
-        postCommIndexes.clear();
 
-        std::vector<int> numOuthoingTargets;
-        numOuthoingTargets.resize(pData.numLocal);
-
-        for (int i = 0; i < pData.numLocal; i++) {
-            numOuthoingTargets[i] = 0;
-        }
-
-        for (int i = 0; i < comm.outgoingIndexes.size(); i++) {
-            numOuthoingTargets[comm.outgoingIndexes[i]]++;
-        }
         int lineLen = accelxGrid; // line length in particles
 
-        for (int i = 0; i < pData.ownedIndexes.size(); i += lineLen) {
-            //
-            bool commLine = false;
-            for (int j = 0; j < lineLen; j++) {
-                if (i + j >= pData.ownedIndexes.size())
+        ManVec<bool,ScratchAllocator<bool>> outgoingFlags;
+        outgoingFlags.resize(pData.numLocal, false);
+        auto outgoingFlagsPtr = outgoingFlags.data();
+
+        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i) {
+            outgoingFlagsPtr[i] = false;
+        }, pData.numLocal);
+
+        auto outIndexPtr = comm.outgoingIndexes.data();
+        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i){
+            outgoingFlagsPtr[outIndexPtr[i]] = true;
+        }, comm.outgoingIndexes.size());
+
+        iterationOrder.resize(pData.ownedIndexes.size(), false); // pData.numLocal);
+        ManVec<pInd_t, ScratchAllocator<pInd_t>> iterationOrderNew;
+        iterationOrderNew.resize(pData.ownedIndexes.size(), false);
+
+        auto iterationOrderPtr = iterationOrderNew.data();
+
+        // this could be a block for the internal look
+        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE (int i, ParticleData& pData)
+        {
+            bool transportFlag = false;
+            for (int j = 0; j < lineLen; j++)
+            {
+                if ((i * lineLen) + j >= pData.ownedIndexes.size())
                     continue;
-                pInd_t ind = pData.ownedIndexes[i + j];
-                if (numOuthoingTargets[ind] != 0) {
-                    commLine = true;
-                }
+                pInd_t pInd = pData.ownedIndexes[(i * lineLen) + j];
+                transportFlag = transportFlag || outgoingFlagsPtr[pInd];
+                iterationOrderPtr[(i * lineLen) + j] = pInd;
             }
-            if (commLine) {
-                for (int j = 0; j < lineLen; j++) {
-                    if (i + j >= pData.ownedIndexes.size())
-                        continue;
-                    preCommIndexes.push_back(pData.ownedIndexes[i + j]);
-                }
-
-            } else {
-                for (int j = 0; j < lineLen; j++) {
-                    if (i + j >= pData.ownedIndexes.size())
-                        continue;
-                    postCommIndexes.push_back(pData.ownedIndexes[i + j]);
-                }
+            for (int j = 0; j < lineLen; j++)
+            {
+                if ((i * lineLen) + j >= pData.ownedIndexes.size())
+                    continue;
+                pInd_t pInd = pData.ownedIndexes[(i * lineLen) + j];
+                outgoingFlagsPtr[pInd] = transportFlag;
             }
-        }
+        }, 1 + (pData.ownedIndexes.size() / lineLen), pData);
+        Iterator::syncAll();
 
-        // one of the arrays is % blocksize == 0 put that first, then the other one
-        // this can change it can be either pre or post indexes that are even
-        iterationOrder.resize(pData.ownedIndexes.size());//pData.numLocal);
+        auto partitionPoint = stx::stable_partition( EXECPOLICY iterationOrderNew.begin(), iterationOrderNew.end(),
+            [=]DEVCALLABLE(int i)
+        {
+            return outgoingFlagsPtr[i] == true;
+        });
 
+        int preSize = std::distance(iterationOrderNew.begin(), partitionPoint);
+        int postSize = std::distance(partitionPoint, iterationOrderNew.end());
+
+        preCommIndexes.resize(preSize, false);
+        postCommIndexes.resize(postSize, false);
+        Iterator::copy(preCommIndexes.data(), iterationOrderNew.begin(), preSize*sizeof(pInd_t));
+        Iterator::copy(postCommIndexes.data(), &(iterationOrderNew.begin()[preSize]), postSize*sizeof(pInd_t));
+        Iterator::syncAll();
+
+        // the half full block must be last in the iteration order, hence we need to figure out what parts is %128
+        // and then pack iteration order so that the full blocks come first
         auto firstPtr = postCommIndexes.data();
         int firstCount = postCommIndexes.size();
         auto secondPtr = preCommIndexes.data();
@@ -173,6 +189,7 @@ public:
                           },
                           secondCount, *this, pData);
         Iterator::syncAll();
+
 #else
         iterationOrder.resize(pData.ownedIndexes.size());//pData.numLocal);
         Iterator::iterate(OffloadExec(),
@@ -181,6 +198,7 @@ public:
                           },
                           pData.ownedIndexes.size(), *this, pData);
 #endif
+        xvtxRangePop();
 
     }
 
@@ -220,11 +238,11 @@ public:
 
         selfPartIndInCache.resize(iterationOrder.size(), false);
 
-        blockIndexes.resize(pData.numLocal);
-        for (int i = 0; i < pData.numLocal; i++) {
-            blockIndexes[i] = -1;
-        }
-
+        blockIndexes.resize(pData.numLocal, false);
+        auto blockIndexPtr = blockIndexes.data();
+        Iterator::iterate(OffloadExec(),[=] DEVLAMBDA (int i) {
+            blockIndexPtr[i] = -1;
+        }, pData.numLocal);
 
         Iterator::syncAll();
 
@@ -596,7 +614,7 @@ public:
         //Logger::writeAtFirst(fmt::format("Number of cachable blocks {} \n", Logger::getStats(blocks - uncachable, "")));
 
 
-        //nvtxRangePop();
+        //xvtxRangePop();
     }
 
     template<class Policy, typename NFun, typename LFun, class FullArgs>
@@ -619,12 +637,12 @@ public:
 
             auto partA = getAtIndTuple(aParticleInd, partArgs);
             auto partB = getAtIndTuple(bParticleInd, partArgs);
-            //auto sideA = getAtIndTuple(bParticleInd, partArgs);
-            //auto sizeB = getAtIndTuple(bParticleInd, partArgs);
+            auto sideA = getAtIndTuple(lData.sideIndEndA[lInd], linkSideArgs);
+            auto sideB = getAtIndTuple(lData.sideIndEndB[lInd], linkSideArgs);
 
             uint8_t initialState = lData.state[lInd];
 
-            auto all = std::tuple_cat(partA, partB);
+            auto all = std::tuple_cat(partA, partB, sideA, sideB);
 
             auto linkVals = getAtIndTuple(lInd, linkArgs);
 
@@ -780,7 +798,7 @@ pairIteratorCombinedCache(pInd_t *indexes,
                           uint8_t *sideStatePtr,
                           hpReal_t *xCordPtr, hpReal_t *yCordPtr, hpReal_t *zCordPtr,
                           size_t numIndexes,
-                          int indexBlockSize, FullArgs args) {
+                          int indexBlockSize, const FullArgs args) {
 
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int tid = (blockDim.x * threadIdx.y) + threadIdx.x;
@@ -789,21 +807,21 @@ pairIteratorCombinedCache(pInd_t *indexes,
     auto pack = args.split();
     //auto [neighArgs,linkArgs,linkSideArgs,forceArgs] = args.split4();
 
-    auto neighArgs = std::get<0>(pack);
-    auto linkArgs = std::get<1>(pack);
-    auto linkSideArgs = std::get<2>(pack);
-    auto forceArgs = std::get<3>(pack);
+    const auto neighArgs = std::get<0>(pack);
+    const auto linkArgs = std::get<1>(pack);
+    const auto linkSideArgs = std::get<2>(pack);
+    const auto forceArgs = std::get<3>(pack);
 
     // accel.blockIndexes[idx]
 
     extern __shared__ uint8_t baseShardPtr[];
     int shrdOffset = 0;
 
-    auto cordArgs = std::make_tuple(xCordPtr, yCordPtr, zCordPtr);
-    auto cordArgShrdPtr = makeSharedPtrs(&baseShardPtr[shrdOffset], CombinedAccelSmem::numInCache, cordArgs);
+    const auto cordArgs = std::make_tuple(xCordPtr, yCordPtr, zCordPtr);
+    const auto cordArgShrdPtr = makeSharedPtrs(&baseShardPtr[shrdOffset], CombinedAccelSmem::numInCache, cordArgs);
 
     shrdOffset += CombinedAccelSmem::numInCache * 3 * sizeof(hpReal_t );
-    auto neighArgsShrdPtr = makeSharedPtrs(&baseShardPtr[shrdOffset], CombinedAccelSmem::numInCache, neighArgs);
+    const auto neighArgsShrdPtr = makeSharedPtrs(&baseShardPtr[shrdOffset], CombinedAccelSmem::numInCache, neighArgs);
 
 
     int nidx = threadIdx.x;
@@ -878,8 +896,8 @@ pairIteratorCombinedCache(pInd_t *indexes,
             auto link = getAtIndTuple(lInd, linkArgs);
 
             lpReal_t mask = 1;
-            uint8_t state = statePtr[lInd];
-            // uint8_t state = sideState[ctInd];
+            // uint8_t state = statePtr[lInd];
+            uint8_t state = sideStatePtr[ctInd];
             if (state == 0) { mask = 0; } // can i get rid of this read
 
             lpReal_t xDist = std::get<0>(cord) - std::get<0>(cordOther);//xCord - xCordOth;
@@ -948,7 +966,10 @@ void CombinedAccelSmem::iterateCombined(Policy policy, ManVec<pInd_t> &indexes, 
 
     sharedSize *= numInCache;
 
-    //cudaFuncSetCacheConfig(&pairIteratorCombinedCache<NFun, LFun>, cudaFuncCachePreferShared);
+    // std::cout << "shared size " << sharedSize << std::endl;
+
+
+    // getErrorDevApi(cudaFuncSetAttribute(pairIteratorCombinedCache<NFun, LFun, FullArgs>, cudaFuncAttributePreferredSharedMemoryCarveout, cudaSharedmemCarveoutMaxShared));
     if (indexes.size() != 0)
         getErrorDev(((pairIteratorCombinedCache<<<grd, threads, sharedSize>>>(indexes.data(),
                 *this, nFunc, lFunc,

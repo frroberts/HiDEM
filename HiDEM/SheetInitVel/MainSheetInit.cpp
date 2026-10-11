@@ -521,7 +521,7 @@ int main(int argc, char *argv[]) {
 
             hiDem.snapshotLinks(std::make_tuple(
                                         "state", "keyEndA", "keyEndB", "globalKey"),
-                                packVecPtrs(lData.state, lData.globalKeyEndA, lData.globalKeyEndA,
+                                packVecPtrs(lData.state, lData.globalKeyEndA, lData.globalKeyEndB,
                                             lData.globalKeys));
 
         }

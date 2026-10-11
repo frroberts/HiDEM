@@ -13,6 +13,8 @@
 
 template<class UserData>
 class ParticleDataHandler : public UserData {
+    ManVec<uint8_t, ScratchAllocator<uint8_t>> scratchSpace;
+    ManVec<pInd_t> reorderOrder;
 public:
     ParticleDataHandler() {
     }
@@ -25,7 +27,7 @@ public:
     }
 
     void reorder(ManVec<pInd_t> &newOrder) {
-        //nvtxRangePush("reorder particle");
+        xvtxRangePush("reorder particle");
         // regenerate owned particles, assuming owner is 0,
 
         ManVec<pInd_t> orderInverted;
@@ -58,8 +60,9 @@ public:
         Iterator::syncAll();
 
         callForTupleElem(this->getFieldTupleInput(), [&](auto vecPTr) {
-            reorderDevVec(*vecPTr, newOrder);
+            reorderDevVecScratch(*vecPTr, newOrder, scratchSpace);
         });
+        xvtxRangePop();
     }
 
     void resize(size_t newSize) {
@@ -73,12 +76,16 @@ public:
         });
     }
 
+
+
     void dropNonOwned() {
-        //nvtxRangePush("dropNonOwned particle");
+        xvtxRangePush("dropNonOwned particle");
         // this is just a memcpy
+
+
         ManVec<pInd_t> reorderOrder;
 
-        reorderOrder.resize(this->numLocal);
+        reorderOrder.resize(this->numLocal, false);
 
         Iterator::copy(reorderOrder.data(), this->ownedIndexes.data(),
                        this->ownedIndexes.size() * sizeof(pInd_t));
@@ -88,9 +95,36 @@ public:
 
         size_t newSize = this->ownedIndexes.size();
 
-        callForTupleElem(this->getFieldTupleInput(), [&](auto vecPTr) {
-            reorderDevVec(*vecPTr, reorderOrder);
+        callForTupleElem(this->getFieldTupleInput(), [&](auto vecPTr)
+        {
+            reorderDevVecScratch(*vecPTr, reorderOrder, scratchSpace);
         });
+        /*
+
+        auto vecPtrs = this->getFieldTupleInput();
+
+        callForTupleElemRef(vecPtrs, [&] <typename T> (ManVec<T> *&vecPtr) {
+            vecPtr = new ManVec<T>();
+            vecPtr->resize(this->numLocal, false);
+        });
+
+        auto inputPtr = vecPtrToDataPtr(this->getFieldTupleInput());
+        auto outPtr = vecPtrToDataPtr(vecPtrs);
+
+        auto reorderPtr = reorderOrder.data();
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int ind) {
+            int reorderInd = reorderPtr[ind];
+            loadStorePtrTuple(ind, outPtr, reorderInd, inputPtr);
+        }, this->numLocal);
+
+        callForTuple2Elem(this->getFieldTupleInput(), vecPtrs, [] <typename T> (ManVec<T> *&aPtr, ManVec<T> *&bPtr) {
+            std::swap(*aPtr, *bPtr);
+        });
+
+        callForTupleElemRef(vecPtrs, [&] <typename T> (ManVec<T> *&vecPtr) {
+            delete vecPtr;
+        });
+        */
 
         resize(newSize);
 
@@ -101,7 +135,8 @@ public:
             pData.ownedIndexes[ind] = ind;
         }, newSize, *this);
         Iterator::syncAll();
-        //nvtxRangePop();
+        xvtxRangePop();
+
     }
 
 
