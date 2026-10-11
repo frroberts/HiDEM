@@ -25,14 +25,10 @@ COMP = hipcc -Wno-unused-result
 FLAGS = ${INCL_PATHS} ${MPI_INCL} ${HDF5_INCL} ${DEFS} --std=c++20 -O3 -g --offload-arch=gfx90a:xnack+
 LINK = hipcc
 
-LINKFLAGS = ${LINK} ${DEFS} -o HiDEM Util.o Balancer.o NeighbourGrid.o RangeCollection.o GeometryCollection.o Map2dLoader.o \
-InputGeometry.o CompoundInput.o MapLoader.o InputMesh.o HiDEMDistribution.o HiDEMH5Checkpoint.o \
-HiDEMGeometry.o -lhiprand -L ${MPI_BASE_PATH}lib  -L ${HDF5_BASE_PATH}lib -lmpi -lhdf5 -lgomp \
+LINKFLAGS = ${LINK} ${DEFS} -o HiDEM ${OBJECTS}  -lhiprand -L ${MPI_BASE_PATH}lib  -L ${HDF5_BASE_PATH}lib -lmpi -lhdf5 -lgomp \
 -L${MPICH_DIR}/lib -lmpi ${CRAY_XPMEM_POST_LINK_OPTS} -lxpmem ${PE_MPICH_GTL_DIR_amd_gfx90a} ${PE_MPICH_GTL_LIBS_amd_gfx90a} -I${MPICH_DIR}/include -o HiDEM
 
-OBJECTS = Util.o Balancer.o NeighbourGrid.o RangeCollection.o GeometryCollection.o Map2dLoader.o \
-InputGeometry.o CompoundInput.o MapLoader.o InputMesh.o HiDEMDistribution.o HiDEMH5Checkpoint.o \
-HiDEMGeometry.o
+OBJECTS = Util.o Balancer.o NeighbourGrid.o RangeCollection.o GeometryCollection.o Map2dLoader.o InputGeometry.o CompoundInput.o MapLoader.o HiDEMGeometry.o
 
 
 MainCustom : MainCustom.o ${OBJECTS}

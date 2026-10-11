@@ -469,10 +469,6 @@ int main(int argc, char *argv[]) {
             dragCoeff = waterDrag;
         }
 
-        if (xCord > 121000.0f && yCord > 70000.0f && (zCord - radius) - bedzCord < bedInteract) {
-            xCord = xCordPrev;
-            yCord = yCordPrev;
-        }
 
         lpReal_t xForce = pData.xForce[pInd];
         lpReal_t yForce = pData.yForce[pInd];
@@ -545,6 +541,7 @@ int main(int argc, char *argv[]) {
         lpReal_t xThetaVel = (xTheta - xThetaPrev) * invDt;
         lpReal_t yThetaVel = (yTheta - yThetaPrev) * invDt;
         lpReal_t zThetaVel = (zTheta - zThetaPrev) * invDt;
+
 
         // Restrict maximum particle velocity to below maxVel and maxRot
         if (xVel > maxVel) {
