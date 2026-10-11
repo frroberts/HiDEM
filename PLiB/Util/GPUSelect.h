@@ -12,7 +12,7 @@ void selectDevice() {
     int devices;
     int devicesGlobalMin;
     int selectedDevice;
-    devGetDeviceCount(&devices);
+    getErrorDevApi(devGetDeviceCount(&devices));
     MPI_Allreduce(&devices, &devicesGlobalMin, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     // reduce dev count, if min is not local count complain and exit
     if((devices != devicesGlobalMin)){
@@ -35,16 +35,16 @@ void selectDevice() {
 
     // set the device based on the id of the rank on the node
     // % number of devices to allow for oversubscription
-    devSetDevice(myRankOnNode%devices);
+    getErrorDevApi(devSetDevice(myRankOnNode%devices));
 
     // printing of device selection
-    devGetDevice(&selectedDevice);
+    getErrorDevApi(devGetDevice(&selectedDevice));
     char hostname[128];
     int resLen;
     MPI_Get_processor_name(hostname, &resLen);
 
     char pcieId[13];
-    devDeviceGetPCIBusId(pcieId, 13, selectedDevice);
+    getErrorDevApi(devDeviceGetPCIBusId(pcieId, 13, selectedDevice));
 
     char * allIds;
     allIds = new char[13*nodeSize];

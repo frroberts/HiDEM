@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
     //           Set up anything related to HiDEMLib
     // ------------------------------------------------
 
-    HiDEMLib<HiDEMParticleData, HiDEMLinkDataExt> hiDem;
+    HiDEMLib<HiDEMParticleData, HiDEMLinkData> hiDem;
     hiDem.setup(arguments, scale);
 
     // missing output arguments
@@ -342,7 +342,7 @@ int main(int argc, char *argv[]) {
         const lpReal_t &xTheta1, const lpReal_t &yTheta1, const lpReal_t &zTheta1,
         const hpReal_t &xCord2, const hpReal_t &yCord2, const hpReal_t &zCord2,
         const lpReal_t &xTheta2, const lpReal_t &yTheta2, const lpReal_t &zTheta2,
-        uint8_t &state, lpReal_t &initialLen, lpReal_t &maxLen
+        uint8_t &state, lpReal_t &initialLen
     ) {
         // check if the link is not broken, and if it is just return to not do anyting
         if (state == 0)
@@ -484,6 +484,7 @@ int main(int argc, char *argv[]) {
         lpReal_t yThetaVel = (yTheta - yThetaPrev) * invDt;
         lpReal_t zThetaVel = (zTheta - zThetaPrev) * invDt;
 
+
         // Restrict maximum particle velocity to below maxVel and maxRot
         if (xVel > maxVel) {
             xCord = dt * maxVel + xCordPrev;
@@ -607,7 +608,7 @@ int main(int argc, char *argv[]) {
                              packVecPtrs(pData.xCord, pData.yCord, pData.zCord,
                                          pData.xTheta, pData.yTheta, pData.zTheta),
                              packVecPtrs(),
-                             packVecPtrs(lData.state, lData.initialLen, lData.maxLen));
+                             packVecPtrs(lData.state, lData.initialLen));
         }
 
         hiDem.finalizeTs();

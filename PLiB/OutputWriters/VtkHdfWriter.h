@@ -20,10 +20,8 @@ class VtkHdfWriter {
 
     template<std::size_t... ints, typename ...Names, typename ...Fields>
     void unpackValsIndexedImpl(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields, ManVec<pInd_t> &indexes,
-                        size_t fullSize,
-                        std::integer_sequence<std::size_t, ints...>) {
-        ((io.writeDataIndexed(std::get<ints>(outFields), fullSize, indexes.data(), indexes.size(),
-                            std::get<ints>(fieldNames))), ...);
+                        size_t fullSize, std::integer_sequence<std::size_t, ints...>) {
+        ((io.writeDataIndexed(std::get<ints>(outFields), fullSize, indexes.data(), indexes.size(), std::get<ints>(fieldNames))), ...);
     }
 
     template<typename ...Names, typename ...Fields>
@@ -34,11 +32,15 @@ class VtkHdfWriter {
     template<std::size_t... ints, typename ...Names, typename ...Fields>
     void unpackValsImpl(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields, size_t fullSize,
                         std::integer_sequence<std::size_t, ints...>) {
-        (io.writeDataSpan(std::get<ints>(outFields),
-                            std::get<ints>(fieldNames), io.generateSpan(fullSize)), ...);
+        (io.writeDataSpan(std::get<ints>(outFields), std::get<ints>(fieldNames), io.generateSpan(fullSize)), ...);
     }
 
 public:
+    VtkHdfWriter() = default;
+    VtkHdfWriter(bool compression, int compressionLevel) : io(compression, compressionLevel) {
+        //
+
+    }
     // todo change write to stage
     // add write call
     // the idea being you can call stage and then the io function will make local copies to write out later
@@ -60,48 +62,83 @@ public:
         MPI_Allreduce(&numParticlesLocal, &numParticlesGlobal, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
         io.openGroup("VTKHDF");
-        io.writeAttributeStr("Type", "UnstructuredGrid");
+        io.writeAttributeStr("Type", "PolyData");
         std::vector<long long int> version = {2, 2};
         io.writeAttributeArr("Version", version);
 
-        ManVec<long long int> NumberOfPoints;
-        NumberOfPoints.push_back(numParticlesGlobal);
-        io.writeVectorFirst(NumberOfPoints, "NumberOfPoints");
+        ManVec<long long int> numberOfPoints;
+        numberOfPoints.push_back(numParticlesGlobal);
+        io.writeVectorFirst(numberOfPoints, "NumberOfPoints");
 
-        ManVec<int> NumberOfConnectivityIds;
-        NumberOfConnectivityIds.push_back(0);
-        io.writeVectorFirst(NumberOfConnectivityIds, "NumberOfConnectivityIds");
-
-        ManVec<int> NumberOfCells;
-        NumberOfCells.push_back(0);
-        io.writeVectorFirst(NumberOfCells, "NumberOfCells");
-
-        ManVec<int> Offsets;
-        Offsets.push_back(0);
-        io.writeVectorFirst(Offsets, "Offsets");
-
-        ManVec<int> Connectivity;
-        io.writeVectorFirst(Connectivity, "Connectivity");
-
-        MPI_Barrier(MPI_COMM_WORLD);
-        ManVec<unsigned char> Types;
-        io.writeVectorFirst(Types, "Types");
-        ManVec<CordT> points;
+        ManVec<lpReal_t> points;
         packPoints(xCords, yCords, zCords, indexes, points);
-
         io.writeVectorAll2D(points, "Points", 3);
 
         io.openGroup("PointData");
         unpackValsIndexed(fieldNames, outFields, indexes, xCords.size());
         io.closeGroup();
 
+        ManVec<int> numberOfConnectivityIds;
+        numberOfConnectivityIds.push_back(0);
+        ManVec<int> numberOfCells;
+        numberOfCells.push_back(0);
+        ManVec<int> offsets;
+        offsets.push_back(0);
+        ManVec<int> connectivity;
+        // this is a bit of a hack, it should be empty
+        connectivity.push_back(0);
+
+        io.openGroup("Lines");
+        io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
+        io.writeVectorFirst(numberOfCells, "NumberOfCells");
+        io.writeVectorFirst(offsets, "Offsets");
+        io.writeVectorFirst(connectivity, "Connectivity");
+        io.closeGroup();
+
+        io.openGroup("Polygons");
+        io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
+        io.writeVectorFirst(numberOfCells, "NumberOfCells");
+        io.writeVectorFirst(offsets, "Offsets");
+        io.writeVectorFirst(connectivity, "Connectivity");
+        io.closeGroup();
+
+        io.openGroup("Strips");
+        io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
+        io.writeVectorFirst(numberOfCells, "NumberOfCells");
+        io.writeVectorFirst(offsets, "Offsets");
+        io.writeVectorFirst(connectivity, "Connectivity");
+        io.closeGroup();
+
+        offsets.resize(numParticlesGlobal+1);
+        connectivity.resize(numParticlesGlobal);
+
+        auto offsetPtr = offsets.data();
+        auto connectivityPtr = connectivity.data();
+        Iterator::iterate(ParallelExec(), [=] (int i) {
+            // zero first one as per definition
+            offsetPtr[i + 1] = i;
+            connectivityPtr[i] = i;
+        }, numParticlesGlobal);
+        Iterator::syncAll();
+
+        io.openGroup("Vertices");
+        numberOfCells[0] = numParticlesGlobal;
+        numberOfConnectivityIds[0] = numParticlesGlobal;
+        io.writeVectorFirst(numberOfConnectivityIds, "NumberOfConnectivityIds");
+        io.writeVectorFirst(numberOfCells, "NumberOfCells");
+        // possibly create serial offset vector here
+
+        io.writeVectorFirst(offsets, "Offsets");
+        io.writeVectorFirst(connectivity, "Connectivity");
+        io.closeGroup();
+
         io.closeGroup();
     }
 
-    template<class CordT>
-    void packPoints(ManVec<CordT> &xCords, ManVec<CordT> &yCords, ManVec<CordT> &zCords, ManVec<pInd_t> &indexes, ManVec<CordT> &points) const {
+    template<class CordT, class CordTOut>
+    void packPoints(ManVec<CordT> &xCords, ManVec<CordT> &yCords, ManVec<CordT> &zCords, ManVec<pInd_t> &indexes, ManVec<CordTOut> &points) const {
         points.resize(indexes.size() * 3);
-        CordT *pointPtr = points.data();
+        CordTOut *pointPtr = points.data();
         CordT *xCordsPtr = xCords.data();
         CordT *yCordsPtr = yCords.data();
         CordT *zCordsPtr = zCords.data();
@@ -120,8 +157,6 @@ public:
     template<class CordT, typename ...Names, typename ...Fields>
     void writeMeshFullSingle(CordT* xCords, CordT* yCords, CordT* zCords, int numTris,
                              std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields) {
-        if (getLocalRank() != 0)
-            return;
 
         io.openGroup("VTKHDF");
         io.writeAttributeStr("Type", "UnstructuredGrid");

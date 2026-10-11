@@ -52,6 +52,18 @@ public:
             fun(str);
         }
     }
+
+    template<typename T>
+    void splitStringDelims(const std::string &input, std::string delims, T fun) {
+        std::size_t prev = 0, pos;
+        while ((pos = input.find_first_of(delims, prev)) != std::string::npos) {
+            if (pos > prev)
+                fun(input.substr(prev, pos - prev));
+            prev = pos + 1;
+        }
+        if (prev < input.length())
+            fun(input.substr(prev, std::string::npos));
+    }
 };
 
 

@@ -79,7 +79,8 @@ endif()
 
 if(ENABLE_PSTL)
     # todo fix a better tbb detection if using gcc
-    target_link_libraries(HiDEMLib PUBLIC tbb)
+    # is this still needed with modern compilers ?
+    # target_link_libraries(HiDEMLib PUBLIC tbb)
 endif()
 
 if(ENABLE_OMP)

@@ -6,7 +6,7 @@ As rocm is loaded from lustre expect compile times to be longer than previously.
 
 Load the following modules :
 
-`PrgEnv-gnu LUMI/23.09 partition/G rocm cray-hdf5-parallel`
+`PrgEnv-gnu LUMI buildtools cray-hdf5-parallel rocm`
 
 Generally you want to use the newest version of rocm if possible, and this assumes the MPICH module is loaded by default.
 

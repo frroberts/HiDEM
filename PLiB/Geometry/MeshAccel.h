@@ -133,13 +133,11 @@ public:
                     numFound++;
                 }
             }
-            accel.sizes[getCell(xPos, yPos, zPos)] = numFound;
+            accel.sizes[accel.getCell(xPos, yPos, zPos)] = numFound;
         }, xCount, yCount, zCount, *this);
         Iterator::syncAll();
 
-        ParallelScan scanner;
-
-        scanner.exclusive(sizes, starts);
+        ParallelScan::exclusive(sizes, starts);
 
         values.resize(sizes[sizes.size() - 1] + starts[starts.size() - 1]);
 
@@ -149,7 +147,7 @@ public:
             lpReal_t yPos = (y * accel.yCellSize + (0.5f * accel.yCellSize)) + accel.yLower;
             lpReal_t zPos = (z * accel.zCellSize + (0.5f * accel.zCellSize)) + accel.zLower;
 
-            int cell = getCell(xPos, yPos, zPos);
+            int cell = accel.getCell(xPos, yPos, zPos);
 
             Real3f cord = Real3f{xPos, yPos, zPos};
 
@@ -160,7 +158,7 @@ public:
                 auto p3 = Real3f{xVtxCord[(i * 3) + 2], yVtxCord[(i * 3) + 2], zVtxCord[(i * 3) + 2]};
                 lpReal_t dist = accel.triSDF2(cord, p1, p2, p3);
                 if (dist < maxDist) {
-                    accel.values[starts[cell] + numFound] = i;
+                    accel.values[accel.starts[cell] + numFound] = i;
                     numFound++;
                 }
             }

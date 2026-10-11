@@ -32,7 +32,8 @@ void reorderDevVec(ManVec<T> &v, ManVec<Tind> &order, OffloadExec policy = Offlo
         raise(SIGINT);
         exit(1);
     }
-    ManVec<T> ret(v.size());
+    ManVec<T> ret;
+    ret.resize(v.size());
 
     T* v_ptr = v.data();
     T* ret_ptr = ret.data();
@@ -43,7 +44,7 @@ void reorderDevVec(ManVec<T> &v, ManVec<Tind> &order, OffloadExec policy = Offlo
     }, v.size());
     Iterator::syncAll();
 
-    ManVec<T>::swap(v, ret);
+    std::swap(v, ret);
 }
 
 template<typename Ind, typename FilterFun, typename ...Args>

@@ -260,11 +260,11 @@ int main(int argc, char *argv[]) {
                 lpReal_t xDist2 = xDist * xDist;
                 lpReal_t yDist2 = yDist * yDist;
                 lpReal_t zDist2 = zDist * zDist;
-                lpReal_t LI = sqrt(xDist2 + yDist2 + zDist2);
-                lpReal_t LP = sqrt(xDist2 + yDist2);
-                lpReal_t invLI = lpReal_t(1.0f) / LI;
-                lpReal_t invLP = lpReal_t(1.0f) / LP;
-                lpReal_t invLILP = lpReal_t(1.0f) / (LI * LP);
+                lpReal_t distSum = xDist2 + yDist2 + zDist2;
+                lpReal_t invLI = 1.f/sqrt(distSum);
+                lpReal_t invLP = 1.f/sqrt(xDist2 + yDist2);
+                lpReal_t invLILP = invLI * invLP;
+                lpReal_t LI = invLI * (distSum);
 
                 lpReal_t T00 = xDist * invLI;
                 lpReal_t T01 = yDist * invLI;
@@ -296,7 +296,7 @@ int main(int argc, char *argv[]) {
 
                 lpReal_t K[6];
 
-                lpReal_t LIDiv6 = 1.f / (lpReal_t(6.0f) * LI);
+                lpReal_t LIDiv6 = (1.f / lpReal_t(6.0f)) * invLI;
 
                 K[0] = E * W2 * invLI;
                 K[1] = E * W4 / (L3);
@@ -354,19 +354,10 @@ int main(int argc, char *argv[]) {
         }
     };
 
-    char name[MPI_MAX_PROCESSOR_NAME];
-    int len;
-    MPI_Get_processor_name(name, &len);
-    auto hostname = std::string(name);
-    std::hash<std::string> hashFun;
-    int hostHash = hashFun(hostname);
-
-
     auto applyForce = [=] DEVCALLABLE(
             pInd_t pInd, HiDEMParticleDataExt &pData) {
         // iterates all particles to move next and prev
         // Compute next positions
-        pData.flag[pInd] = hostHash;
 
         hpReal_t xCord = pData.xCord[pInd];
         hpReal_t yCord = pData.yCord[pInd];

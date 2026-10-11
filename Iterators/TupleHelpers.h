@@ -205,6 +205,18 @@ void addAtIndTuple(int ind, std::tuple<Args *...> ptrs, std::tuple<Args...> vals
     addAtIndTupleImpl(ind, ptrs, vals, std::make_index_sequence<sizeof...(Args)>());
 }
 
+template<std::size_t... ints, class ...ArgsA, class ...ArgsB>
+auto zipTuplesImpl(std::tuple<ArgsA ...> tupA, std::tuple<ArgsB...> tupB, std::integer_sequence<std::size_t, ints...>) {
+    return std::tuple_cat(std::make_tuple(std::get<ints>(tupA), std::get<ints>(tupB))...);
+}
+
+template<class ...ArgsA, class ...ArgsB>
+auto zipTuples(std::tuple<ArgsA ...> tupA, std::tuple<ArgsB...> tupB) {
+    return zipTuplesImpl(tupA, tupB, std::make_index_sequence<sizeof...(ArgsA)>());
+}
+
+
+
 
 // make a lambda in zero
 template<class T>
@@ -231,7 +243,6 @@ DEVCALLABLE
 auto packVecPtrs(Vec& ... vecs){
     return std::make_tuple(&vecs...);
 }
-
 
 
 template<std::size_t... ints, class ...Args>
@@ -266,6 +277,27 @@ void callForTupleElem(std::tuple<Elems...> elems, Fun fun) {
 template<std::size_t... ints, typename ...Elems, typename Fun>
 void callForTupleElemImpl(std::tuple<Elems...> elems, std::integer_sequence<std::size_t, ints...>, Fun fun) {
     (fun(std::get<ints>(elems)), ...);
+}
+
+template<typename ...Elems, typename Fun>
+void callForTupleElemRef(std::tuple<Elems...> &elems, Fun fun) {
+    callForTupleElemRefImpl(elems, std::make_index_sequence<sizeof...(Elems)>(), fun);
+}
+
+template<std::size_t... ints, typename ...Elems, typename Fun>
+void callForTupleElemRefImpl(std::tuple<Elems...> &elems, std::integer_sequence<std::size_t, ints...>, Fun fun) {
+    (fun(std::get<ints>(elems)), ...);
+}
+
+
+template<typename ...Elems1, typename ...Elems2, typename Fun>
+void callForTuple2Elem(std::tuple<Elems1...> elems1, std::tuple<Elems2...> elems2, Fun fun) {
+    callForTuple2ElemImpl(elems1, elems2, std::make_index_sequence<sizeof...(Elems1)>(), fun);
+}
+
+template<std::size_t... ints, typename ...Elems1, typename ...Elems2, typename Fun>
+void callForTuple2ElemImpl(std::tuple<Elems1...> elems1, std::tuple<Elems2...> elems2, std::integer_sequence<std::size_t, ints...>, Fun fun) {
+    (fun(std::get<ints>(elems1), std::get<ints>(elems2)), ...);
 }
 
 

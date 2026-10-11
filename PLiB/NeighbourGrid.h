@@ -37,10 +37,7 @@ public:
     ManVec<size_t> bucketSizesColor; // sized num buckets
     ManVec<pInd_t > iterationOrderPerColor;
 
-    ParallelScan scanner;
-    ParallelSort sorter;
     ParallelReduce<size_t> reducer;
-
 
     int xGridSize;
     int yGridSize;

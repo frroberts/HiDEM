@@ -66,7 +66,7 @@ public:
         MPI_Comm_rank(MPI_COMM_WORLD, &myRank);
         if(myRank == 0) {
             //
-            std::cout << fmt::format("{}", message) << std::flush;
+            std::cout << message << std::flush;
         }
     }
 

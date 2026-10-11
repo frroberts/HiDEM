@@ -6,9 +6,11 @@
 
 #include "DevCall.h"
 
+#if (ENABLE_SIMD512 == 1) || (ENABLE_SIMD256 == 1)
 #include <immintrin.h>
 #include <vectorclass.h>
 #include <tuple>
+#endif
 
 DEVCALLABLE
 double select(bool pred, double a, double b) {
@@ -574,6 +576,7 @@ Mask_t getFullMask(int numMasks, const Mask_t *selfMasks) {
 
 // hide behind generic simd defines
 
+#if (ENABLE_SIMD512 == 1) || (ENABLE_SIMD256 == 1)
 
 // reduceSumByMasks
 template<class ...PtrArgs, class ...Args, class Mask_t>
@@ -605,7 +608,7 @@ auto computePsDiffPdTup(std::tuple<PtrArgs *...> cords, int numMasks, const Mask
     return computePsDiffPdTupImpl(cords, numMasks, selfMasks, selfIndex, neighInd, std::make_index_sequence<sizeof...(PtrArgs)>());
 }
 
-
+#endif
 
 
 

@@ -34,7 +34,27 @@ namespace Atomic {
         old = target++;
         return old;
 #endif
+    }
 
+    template<typename T>
+    DEVCALLABLE
+    static T atomicCASVal(T &target, T comp, T val) {
+#ifdef __CUDA_ARCH__
+            return atomicCAS((unsigned long long int *)&target, (unsigned long long int )comp, (unsigned long long int )val);
+#elif __HIP_DEVICE_COMPILE__
+            return atomicCAS((unsigned long long int *)&target, (unsigned long long int )comp, (unsigned long long int )val);
+#else
+        // todo replace with atomic compare capture
+        T currentVal;
+#pragma omp critical
+        {
+            currentVal = target;
+            if (currentVal == comp) {
+                target = val;
+            }
+        }
+        return currentVal;
+#endif
     }
 }
 #endif //PHELL_ATOMICOPS_H

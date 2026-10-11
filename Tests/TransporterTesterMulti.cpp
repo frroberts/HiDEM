@@ -9,7 +9,7 @@
 #include <Domain.h>
 #include <World.h>
 
-#include <Transport/Communicator.h>
+#include <Transport/CommunicatorIndividual.h>
 #include <Transport/Transporter.h>
 #include <Transport/LinkTransporter.h>
 #include <Transport/ParticleTransporter.h>

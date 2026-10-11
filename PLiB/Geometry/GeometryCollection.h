@@ -30,6 +30,10 @@ public:
         collisionMeshData = new MeshData();
         geometryMeshData = new MeshData();
     }
+    ~GeometryCollection() {
+        delete collisionMeshData;
+        delete geometryMeshData;
+    }
     lpReal_t meshCellSizeScale = 1;
     lpReal_t meshRangeFactor = 1;
 
@@ -70,7 +74,7 @@ public:
         InputMesh *mesh = new InputMesh();
 
         mesh->dataPtr = collisionMeshData;
-        mesh->meshId = -1;
+        mesh->meshId = 0;
         mesh->cellSizeScale = meshCellSizeScale;
         mesh->rangeFactor = meshRangeFactor;
         mesh->accel = new MeshAccel();

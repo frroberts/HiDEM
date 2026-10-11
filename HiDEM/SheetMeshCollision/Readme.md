@@ -9,7 +9,7 @@ The collision is all handled in the `applyForce` function, there is a new sectio
 
 The section looks as follows:
 ```c++
-        // NOTE!!! this is here more as a demo og how interactions can be done, it it not nessecarily physcially acurate !!!!
+        // NOTE!!! this is here more as a demo of how interactions can be done, it it not nessecarily physcially acurate !!!!
         mesh->closestTriFun(xCord,yCord, zCord, bedInteract, pInd, [&] (int tri, lpReal_t dist){
             dist = sqrt(dist);
 

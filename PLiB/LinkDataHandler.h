@@ -6,6 +6,11 @@
 #define LINKDATAHANDLER_H
 
 #include <Util/DropReorder.h>
+#include "Generators/ElementrayLink.h"
+#include "ParticleData.h"
+#include <LoggerV2/RangeCollection.h>
+
+#include "ParallelListGen.h"
 
 template<class UserData>
 class LinkDataHandler : public UserData {
@@ -18,10 +23,12 @@ public:
 
         size_t newSize = this->numLocal - droppedLocalIndexes.size();
 
-        ManVec<lInd_t> droppedSideInd(droppedLocalIndexes.size() * 2);
+        ManVec<lInd_t> droppedSideInd;
+        droppedSideInd.resize(droppedLocalIndexes.size() * 2);
+
         auto droppedSideIndPtr = droppedSideInd.data();
         auto droppedLocalIndexesPtr = droppedLocalIndexes.data();
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (ind_t i, HiDEMLinkData &lData) {
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (ind_t i, LinkDataHandler<UserData> &lData) {
             auto lInd = droppedLocalIndexesPtr[i];
             droppedSideIndPtr[(i * 2) + 0] = lData.sideIndEndA[lInd];
             droppedSideIndPtr[(i * 2) + 1] = lData.sideIndEndB[lInd];
@@ -52,16 +59,40 @@ public:
     }
 
     void dropBrokenLinks() {
+        /*
         //nvtxRangePush("dropBrokenLinks links");
         ManVec<lInd_t> toBeDropped;
-        for (size_t i = 0; i < this->numLocal; ++i) {
-            if (this->state[i] == 0)
-                toBeDropped.push_back(i);
-        }
+        toBeDropped.resize(this->numLocal);
+        auto ptr = toBeDropped.data();
+        Iterator::iterate(OffloadExec(),[=]DEVCALLABLE(int ind) {
+            ptr[ind] = ind;
+        }, this->numLocal);
+        Iterator::syncAll();
+
+        auto statePtr = this->state.data();
+        auto point = thrust::stable_partition(toBeDropped.begin(), toBeDropped.end(), [=](int ind) {
+            return statePtr[ind] == 0;
+        });
+        toBeDropped.resize(std::distance(toBeDropped.begin(), point));
+*/
+        auto statePtr = this->state.data();
+        auto toBeDropped = listGenPredicate<lInd_t>(this->numLocal, [=] DEVCALLABLE (int ind) {
+            return statePtr[ind] == 0;
+        });
         dropLinks(toBeDropped);
         //nvtxRangePop();
     }
 
+    void dropBrokenNonOwnedLinks() {
+        int self = getLocalRank();
+        auto statePtr = this->state.data();
+        auto ownerPtrs = this->owners.data();
+        auto toBeDropped = listGenPredicate<lInd_t>(this->numLocal, [=] DEVCALLABLE (int ind) {
+            return statePtr[ind] == 0 || ownerPtrs[ind] != self;
+        });
+        dropLinks(toBeDropped);
+        //nvtxRangePop();
+    }
 
     void resize(size_t newSize) {
         callForTupleElem(this->getFieldTupleInput(), [&](auto vecPTr) {
@@ -89,7 +120,6 @@ public:
 
         this->ownedIndexes.clear();
         this->nonOwnedIndexes.clear();
-        this->numPraticlesAllocated = 0;
     }
 
 
@@ -119,10 +149,6 @@ public:
         //
         //nvtxRangePush("reorderCT link");
 
-        if (newOrder.size() != this->CT0_flat.size()) {
-            std::cout << "likely invalid CT reorder" << std::endl;
-        }
-
         callForTupleElem(this->getFieldTupleSideInput(), [&](auto vecPTr) {
             reorderDevVec(*vecPTr, newOrder);
         });
@@ -150,166 +176,7 @@ public:
     }
 
 
-    // move to Accel ?
-    void sortSideData(ParticleData &pData) {
 
-        RangeV2 r5("sort link side data", 3);
-        ind_t numParticles = pData.numLocal;
-
-        ManVec<lInd_t> newOrder(this->numLocal * 2);
-
-#if defined(SOA_CT)
-
-    #warning "compiling SOA_CT"
-        ind_t orderInd = 0;
-
-        for (int i = 0; i < this->allocatedMaxLinks; ++i) {
-            for (int pInd = 0; pInd < numParticles; ++pInd) {
-                int numLinks = this->linksPerParticle[pInd];
-                if (i >= numLinks)
-                    continue;
-
-                lInd_t lInd = this->getPartLinkId(i, pInd);
-                lInd_t ctInd;
-                if(this->localPartIndA[lInd] == pInd)
-                    ctInd = this->sideIndEndA[lInd];
-                else {
-                    ctInd = this->sideIndEndB[lInd];
-                }
-                newOrder[orderInd] = ctInd;
-                orderInd++;
-            }
-        }
-
-#elif defined(AOSOA_CT)
-#warning "compiling AOSOA_CT"
-
-        int numInBlock = 64;
-        int numBlocks = 1 + (numParticles / numInBlock);
-
-
-        ManVec<lInd_t> blockSizes;
-        ManVec<lInd_t> blockStarts;
-        blockSizes.resize(numBlocks, false);
-        blockStarts.resize(numBlocks, false);
-        auto ptr = blockSizes.ptr;
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i) {
-            ptr[i] = 0;
-        }, numBlocks);
-
-        // get active in block
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int b, HiDEMLinkData &lData) {
-            int c = 0;
-            for (int l = 0; l < lData.allocatedMaxLinks; l++) {
-                for (size_t i = 0; i < numInBlock; i++) {
-                    int blockStart = (b * numInBlock);
-                    if (blockStart + i >= numParticles)
-                        continue;
-                    pInd_t pInd = blockStart + i;
-                    if (l >= lData.linksPerParticle[pInd])
-                        continue;
-                    c++;
-                }
-            }
-            ptr[b] = c;
-        }, numBlocks, *this);
-
-        // running sum of sizes to get block starts
-        ParallelScan scanner;
-
-        scanner.exclusive(blockSizes, blockStarts);
-
-        // for each block run all the links, one thread per block, its not the best but better than serial?
-        auto newOrderPtr = newOrder.ptr;
-        auto blockStartPtr = blockStarts.ptr;
-        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int b, HiDEMLinkData &lData) {
-            int c = blockStartPtr[b]; // get block start
-            for (int l = 0; l < lData.allocatedMaxLinks; l++) {
-                for (size_t i = 0; i < numInBlock; i++) {
-                    int blockStart = (b * numInBlock);
-                    if (blockStart + i >= numParticles)
-                        continue;
-
-                    pInd_t pInd = blockStart + i;
-                    if (l >= lData.linksPerParticle[pInd])
-                        continue;
-
-                    lInd_t lInd = lData.getPartLinkId(l, pInd);
-                    lInd_t ctInd;
-                    if (lData.localPartIndA[lInd] == pInd)
-                        ctInd = lData.sideIndEndA[lInd];
-                    else {
-                        ctInd = lData.sideIndEndB[lInd];
-                    }
-                    newOrderPtr[c] = ctInd;
-                    c++;
-                }
-            }
-        }, numBlocks, *this);
-        Iterator::syncAll();
-#else
-
-    #warning "compiling AOS_CT"
-
-    // can be done with a scan to get the individual particle start ?
-    // and then the particles can be done in parallel at least ?
-
-    ManVec<lInd_t> particleSarts;
-    particleSarts.resize(numParticles + 1, false);
-    particleSarts[0] = 0;
-
-    std::partial_sum(this->linksPerParticle.begin(), this->linksPerParticle.end(), particleSarts.begin() + 1);
-
-    auto pStartPtr = particleSarts.ptr;
-    auto newOrderPtr = newOrder.ptr;
-
-    Iterator::iterate(ParallelExec(), [=]DEVCALLABLE(ind_t pInd, HiDEMLinkData &lData){
-        //
-        lInd_t orderInd = pStartPtr[pInd];
-        for (int i = 0; i < lData.allocatedMaxLinks; ++i) {
-            int numLinks = lData.linksPerParticle[pInd];
-            if (i >= numLinks)
-                continue;
-            lInd_t lInd = lData.getPartLinkId(i,pInd);
-            lInd_t ctInd;
-            if (lData.localPartIndA[lInd] == pInd)
-                ctInd = lData.sideIndEndA[lInd];
-            else {
-                ctInd = lData.sideIndEndB[lInd];
-            }
-            newOrderPtr[orderInd] = ctInd;
-            orderInd++;
-        }
-    }, numParticles, *this);
-    Iterator::syncAll();
-    /*
-#pragma omp parallel for
-    for (int pInd = 0; pInd < numParticles; ++pInd) {
-        lInd_t orderInd = particleSarts[pInd];
-        for (int i = 0; i < maxLinks; ++i) {
-            int numLinks = linksPerParticle[pInd];
-            if (i >= numLinks)
-                continue;
-            lInd_t lInd = getPartLinkId(i,pInd);
-            lInd_t ctInd;
-            if (localPartIndA[lInd] == pInd)
-                ctInd = sideIndEndA[lInd];
-            else {
-                ctInd = sideIndEndB[lInd];
-            }
-            newOrder[orderInd] = ctInd;
-            orderInd++;
-        }
-    }
-        */
-
-#endif
-        Iterator::syncAll();
-
-        reorderSideData(newOrder);
-
-        //nvtxRangePop();
-    }
 
     void appendInitLinks(ManVec<ElementaryLink> &links) {
         size_t oldCount = this->numLocal;
@@ -326,18 +193,99 @@ public:
         resize(newCount);
         resizeSideData(newCount * 2);
 
-        auto linksPtr = links.ptr;
+        auto linksPtr = links.data();
         Iterator::iterate(OffloadExec(), [=] DEVCALLABLE(ind_t i, UserData &lData) {
 
             lInd_t  outInd = i + oldCount;
             auto &l = linksPtr[i];
 
-            this->processInitLink(l, lData, outInd);
+            lData.processInitLink(l, lData, outInd, outInd*2, outInd*2 + 1);
 
         }, numAdded, *this);
         Iterator::syncAll();
 
         generateOwnedNonOwned(this->owners, this->ownedIndexes, this->nonOwnedIndexes, this->numLocal);
+    }
+
+    // unsure of where to actually put this
+    template<typename StateT>
+    void updateStateInd(ManVec<int> &indexes, StateT &newStates) {
+
+            auto *bufferPtr = newStates.data();
+            auto *indPtr = indexes.data();
+            auto *sideIndEndAPtr = this->sideIndEndA.data();
+            auto *sideIndEndBPtr = this->sideIndEndB.data();
+
+            auto *statePtr = this->state.data();
+            auto *CT0_flat = this->CT0_flat.data();
+            auto *CT1_flat = this->CT1_flat.data();
+            auto *CT2_flat = this->CT2_flat.data();
+            auto *CT3_flat = this->CT3_flat.data();
+            auto *CT4_flat = this->CT4_flat.data();
+            auto *CT5_flat = this->CT5_flat.data();
+
+            Iterator::iterate(OffloadExec(), [=]
+                DEVCALLABLE (int i) {
+                int lInd = indPtr[i];
+
+                bool origState = statePtr[lInd];
+                bool newState = bufferPtr[i];
+
+                // pDataPtr->flag[lData.localPartIndB[lInd]] = -1;
+                if (origState != newState) {
+                    statePtr[lInd] = newState;
+
+                    if (newState == 1) {
+
+                        pInd_t pIndA = sideIndEndAPtr[lInd];
+                        pInd_t pIndB = sideIndEndBPtr[lInd];
+
+                        CT0_flat[pIndB] = 0;
+                        CT1_flat[pIndB] = 0;
+                        CT2_flat[pIndB] = 0;
+                        CT3_flat[pIndB] = 0;
+                        CT4_flat[pIndB] = 0;
+                        CT5_flat[pIndB] = 0;
+
+                        CT0_flat[pIndA] = 0;
+                        CT1_flat[pIndA] = 0;
+                        CT2_flat[pIndA] = 0;
+                        CT3_flat[pIndA] = 0;
+                        CT4_flat[pIndA] = 0;
+                        CT5_flat[pIndA] = 0;
+                    }
+                }
+            }, indexes.size());
+    }
+
+    int getCurrentAllocated() {
+        uint64_t sum = 0;
+
+        callForTupleElem(this->getFieldTupleInput(), [&](auto vecPTr) {
+            sum+= vecPTr->cap;
+        });
+        callForTupleElem(this->getFieldTupleGenerated(), [&](auto vecPTr) {
+            sum+= vecPTr->cap;
+        });
+        callForTupleElem(this->getFieldTupleSideInput(), [&](auto vecPTr) {
+            sum+= vecPTr->cap;
+        });
+        return sum;
+    }
+
+    int getCurrentSize() {
+        uint64_t sum = 0;
+
+        callForTupleElem(this->getFieldTupleInput(), [&](auto vecPTr) {
+            sum+= vecPTr->size();
+        });
+        callForTupleElem(this->getFieldTupleGenerated(), [&](auto vecPTr) {
+            sum+= vecPTr->size();
+        });
+        callForTupleElem(this->getFieldTupleSideInput(), [&](auto vecPTr) {
+            sum+= vecPTr->size();
+        });
+        return sum;
     }
 };
 

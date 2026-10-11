@@ -29,47 +29,40 @@ public:
     double load;
 
     DEVCALLABLE
-    bool within(Real3 cord)
+    bool within(Real3 cord) const
     {
-        //
-        bool xIn;
-        if(lower.x == upper.x && cord.x == lower.x)
-            xIn = true;
-        else
-            xIn = (cord.x >= lower.x && cord.x < upper.x);
+        if ((cord.x < lower.x || cord.x >= upper.x))
+            return false;
 
-        bool yIn;
-        if(lower.y == upper.y && cord.y == lower.y)
-            yIn = true;
-        else
-            yIn = (cord.y >= lower.y && cord.y < upper.y);
+        if ((cord.y < lower.y || cord.y >= upper.y))
+            return false;
 
-        bool zIn;
-        if(lower.z == upper.z && cord.z == lower.z)
-            zIn = true;
-        else
-            zIn = (cord.z >= lower.z && cord.z < upper.z);
+        if ((cord.z < lower.z || cord.z >= upper.z))
+            return false;
 
-        return xIn && yIn && zIn;
-
-        return
-            (cord.x >= lower.x && cord.x < upper.x) &&
-            (cord.y >= lower.y && cord.y < upper.y) &&
-            (cord.z >= lower.z && cord.z < upper.z);
+        return true;
     }
 
     DEVCALLABLE
     bool withinHalo(Real3 cord)
     {
         //
-        return (cord.x >= lowerHalo.x && cord.x < upperHalo.x)
-        && (cord.y >= lowerHalo.y && cord.y < upperHalo.y)
-        && (cord.z >= lowerHalo.z && cord.z < upperHalo.z);
+        if ((cord.x < lowerHalo.x || cord.x >= upperHalo.x))
+            return false;
+
+        if ((cord.y < lowerHalo.y || cord.y >= upperHalo.y))
+            return false;
+
+        if ((cord.z < lowerHalo.z || cord.z >= upperHalo.z))
+            return false;
+
+        return true;
     }
 
     void print()
     {
         std::cout << "owner " << owner << std::endl;
+        std::cout << "load " << load << std::endl;
         std::cout << "lower " << lower.x << " " << lower.y << " " << lower.z << std::endl;
         std::cout << "upper " << upper.x << " " << upper.y << " " << upper.z << std::endl;
         std::cout << "lowerHalo " << lowerHalo.x << " " << lowerHalo.y << " " << lowerHalo.z << std::endl;

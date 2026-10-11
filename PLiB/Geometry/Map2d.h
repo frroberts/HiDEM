@@ -38,7 +38,7 @@ public:
     Map2d(int xPoints, int yPoints, float xMin, float yMin, float xMax, float yMax) :
             xPoints(xPoints), yPoints(yPoints), xMin(xMin), yMin(yMin), xMax(xMax), yMax(yMax) {
 #ifdef GPU
-        devMallocManaged((void**) &data, sizeof(T)*xPoints * yPoints);
+        getErrorDevApi(devMallocManaged((void**) &data, sizeof(T)*xPoints * yPoints));
 #else
         data = new T[xPoints*yPoints];
 #endif

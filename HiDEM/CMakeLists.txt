@@ -10,8 +10,7 @@ set(Main_SheetInit "SheetInitVel/MainSheetInit.cpp")
 set(Main_Scratch "Scratch/HiDEMMain.cpp")
 set(Main_MeshBlock "MeshBlock/MainMeshBlock.cpp")
 set(Main_Custom "MainCustom/MainCustom.cpp")
-
-message("Key ${avar} is mapped into: ${mymap_${avar}}")
+set(Main_LinkRegen "LinkRegen/MainRegen.cpp")
 
 add_executable(HiDEM ${Main_${HiDEMType}})
 

@@ -11,7 +11,9 @@ class ElementaryLink
 {
 public:
     //
+    DEVCALLABLE
     ElementaryLink() { };
+    DEVCALLABLE
     ElementaryLink(gKey_t aInd, gKey_t bInd): globalKeyParticleA(aInd),globalKeyParticleB(bInd)
     {
         //

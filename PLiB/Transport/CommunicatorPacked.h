@@ -8,13 +8,8 @@
 #include <mpi.h>
 
 #include <ManVec.h>
-#include <ScratchMem.h>
-#include <ParallelSort.h>
+#include "Communicator.h"
 
-#include "../ParticleData.h"
-#include "../Util/Util.h"
-#include "../NeighbourGrid.h"
-#include "Transporter.h"
 
 /*
 namespace CommunicatorPackedKernels{
@@ -64,145 +59,125 @@ namespace CommunicatorPackedKernels{
 
         scatterRecursePackDev(sizeof...(outBuffers), idx, index, inBuffer, outBuffers...);
     }
+
+
+    template<class T, class... Tdat, std::size_t... ints>
+    DEVCALLABLE
+    auto getPtrs(std::tuple<Tdat...> &dataBuffers, std::integer_sequence<std::size_t, ints...>) {
+        //
+
+        std::array<T*, sizeof...(Tdat)> ptrs;
+
+        ((ptrs[ints] = std::get<ints>(dataBuffers)->data()), ...);
+
+        return ptrs;
+    }
+
+    template<class T, class... Tdat, std::size_t... ints>
+    DEVCALLABLE
+    T* getPtr(std::tuple<Tdat...> &dataBuffers, int buffInd) {
+        //
+
+        switch (buffInd) {
+            case 0:
+                return std::get<0>(dataBuffers)->data();
+            case 1:
+                return std::get<1>(dataBuffers)->data();
+            case 2:
+                return std::get<2>(dataBuffers)->data();
+            case 3:
+                return std::get<3>(dataBuffers)->data();
+            case 4:
+                return std::get<4>(dataBuffers)->data();
+            case 5:
+                return std::get<5>(dataBuffers)->data();
+        }
+        return nullptr;
+    }
+
+
+    template<class Tind, typename Tdat, typename... TdatPack>
+    __global__ void gatherPackedKern2D(int max, Tind *indexes, Tdat *buffPtr, std::tuple<TdatPack...> dataBuffers) {
+        //
+//        __shared__ Tdat coalaceBuffer[32 * sizeof...(TdatPack)];
+//        __shared__ Tind indCache[32];
+
+        int ind = blockIdx.x * blockDim.x + threadIdx.x;
+
+        if (ind >= max) return;
+
+        pInd_t fromInd = indexes[ind];
+
+        int buffInd = threadIdx.y;
+
+        auto ptr = CommunicatorPackedKernels::getPtr<Tdat>(dataBuffers, buffInd);
+
+        buffPtr[(ind * sizeof...(TdatPack)) + buffInd] = ptr[fromInd];
+
+
+        // coalaceBuffer[(sizeof...(TdatPack) * buffInd) + threadIdx.x] = ;
+*
+
+        auto val = ptr[fromInd];
+        // not correct but correct pattern at least
+        // needs a buffer that is mod 32*6 sized
+        buffPtr[(blockIdx.x * blockDim.x * sizeof...(TdatPack)) + (threadIdx.y*blockDim.y)+ threadIdx.x] = val;
+        //coalaceBuffer[(threadIdx.x * sizeof...(TdatPack)) + buffInd];
+*
+    }
+
+    template<class Tind, typename Tdat, typename... TdatPack>
+    __global__ void scatterPackedKern2D(int max, Tind *indexes, Tdat *buffPtr, std::tuple<TdatPack...> dataBuffers) {
+        //
+//        __shared__ Tdat coalaceBuffer[32 * sizeof...(TdatPack)];
+
+        int ind = blockIdx.x * blockDim.x + threadIdx.x;
+
+        if (ind >= max) return;
+
+        pInd_t fromInd = indexes[ind];
+        int buffInd = threadIdx.y;
+
+        auto ptr = CommunicatorPackedKernels::getPtr<Tdat>(dataBuffers, buffInd);
+
+        ptr[fromInd] = buffPtr[(ind * sizeof...(TdatPack)) + buffInd];
+
+
+*
+        coalaceBuffer[(threadIdx.x * sizeof...(TdatPack)) + buffInd] = buffPtr[(ind * sizeof...(TdatPack)) + buffInd];
+
+        __syncthreads();
+
+        // not correct but correct pattern at least
+        buffPtr[(blockIdx.x * blockDim.x * sizeof...(TdatPack)) + (threadIdx.y*blockDim.y)+threadIdx.y] = coalaceBuffer[(threadIdx.x * sizeof...(TdatPack)) + buffInd];
+*
+    }
 }
- */
 
-template<class T>
-class CommunicatorPacked : public Communicator<T> {
+*/
 
-
+template<class T, int numBuffers>
+class CommunicatorPacked : public Communicator{
 
 public:
 
-    std::vector<ManVec<ind_t>> outgoingGlobalKeys;
-    std::vector<ManVec<ind_t>> incommingGlobalKeys;
-
-    std::unordered_map<int, int> outgoingTargets;
-    std::unordered_map<int, int> incommingTargets;
-
-    ManVec<pInd_t> outgoingIndexes;
-    ManVec<pInd_t> incommingIndexes;
-
-    std::vector<int> incommingStarts;
-    std::vector<int> incommingEnds;
-    std::vector<int> outgoingStarts;
-    std::vector<int> outgoingEnds;
-
-    int outgoingSize = 0;
-    int incommingSize = 0;
-
-    std::vector<MPI_Request> outRequests;
-    std::vector<MPI_Request> inRequests;
-
 #ifdef GPU
 #ifdef ENABLE_GDR
-    ScratchMem<T> outgoingBuffers;
-    ScratchMem<T> incommingBuffers;
+    ManVec<T, ScratchAllocator<T>> outgoingBuffers;
+    ManVec<T, ScratchAllocator<T>> incommingBuffers;
 #else
-    ScratchMem<T> outgoingBuffers_dev;
-    ScratchMem<T> incommingBuffers_dev;
+    ManVec<T, ScratchAllocator<T>> outgoingBuffers_dev;
+    ManVec<T, ScratchAllocator<T>> incommingBuffers_dev;
 
-    PinnedMem<T> outgoingBuffers;
-    PinnedMem<T> incommingBuffers;
+    ManVec<T, PinnedAllocator<T>> outgoingBuffers;
+    ManVec<T, PinnedAllocator<T>> incommingBuffers;
 #endif
 #else
-    PinnedMem<T> outgoingBuffers;
-    PinnedMem<T> incommingBuffers;
+    ManVec<T, PinnedAllocator<T>> outgoingBuffers;
+    ManVec<T, PinnedAllocator<T>> incommingBuffers;
 #endif
 
-    /*
-    // if GPU change to GPU memory
-    ScratchMem<T> outgoingBuffers;
-    ScratchMem<T> incommingBuffers;
-*/
-    int numBuff;
-
-    int tagStart = 0;
-
-    CommunicatorPacked(){
-        //devStreamCreateWithFlags(&transportStream, devStreamNonBlocking);
-        //devStreamCreateWithFlags(&computeStream, devStreamNonBlocking);
-    }
-
-    template <class gType, class lType>
-    void makeLocalIndexes(GlobalLocalMapper<gType, lType> &mapper)
-    {
-        //
-        MPI_Barrier(MPI_COMM_WORLD);
-
-        outgoingSize = 0;
-        incommingSize = 0;
-        for (const auto &target: outgoingTargets) {
-            outgoingSize += outgoingGlobalKeys[target.second].size();
-        }
-        for (const auto &target: incommingTargets) {
-            incommingSize += incommingGlobalKeys[target.second].size();
-        }
-        outgoingIndexes.resize(outgoingSize, false);
-        incommingIndexes.resize(incommingSize, false);
-        incommingStarts.resize(incommingTargets.size());
-        incommingEnds.resize(incommingTargets.size());
-        outgoingStarts.resize(outgoingTargets.size());
-        outgoingEnds.resize(outgoingTargets.size());
-
-        // need to fix start and ends separately
-        int i = 0;
-        for (const auto &target: outgoingTargets) {
-            outgoingStarts[target.second] = i;
-            i+= outgoingGlobalKeys[target.second].size();
-            outgoingEnds[target.second] = i;
-        }
-        i = 0;
-        for (const auto &target: incommingTargets) {
-            incommingStarts[target.second] = i;
-            i+= incommingGlobalKeys[target.second].size();
-            incommingEnds[target.second] = i;
-        }
-
-        i = 0;
-        for (const auto &target: outgoingTargets) {
-
-
-            auto ptrInd = outgoingIndexes.ptr;
-            auto ptrKey = outgoingGlobalKeys[target.second].ptr;
-            auto start = outgoingStarts[target.second];
-            Iterator::iterate(ParallelExec(),[=] (int i, GlobalLocalMapper<gType, lType> &mapper){
-                auto targetGKey = ptrKey[i];
-                ind_t localIndex = mapper.getLocalInd(targetGKey);
-                if(localIndex == -1) {
-                    std::cout << "error local index not found outgoing " << targetGKey << std::endl;
-                    exit(1);
-                }
-                ptrInd[start+i] = localIndex;
-            }, outgoingGlobalKeys[target.second].size(), mapper);
-
-        }
-        i = 0;
-        for (const auto &target: incommingTargets) {
-            auto ptrInd = incommingIndexes.ptr;
-            auto ptrKey = incommingGlobalKeys[target.second].ptr;
-            auto start = incommingStarts[target.second];
-
-
-            Iterator::iterate(ParallelExec(),[=] (int i, GlobalLocalMapper<gType, lType> &mapper){
-                auto targetGKey = ptrKey[i];
-                ind_t localIndex = mapper.getLocalInd(targetGKey);
-                if(localIndex == -1) {
-                    std::cout << "error local index not found incomming " << targetGKey << std::endl;
-                    exit(1);
-                }
-                ptrInd[start+i] = localIndex;
-            }, incommingGlobalKeys[target.second].size(), mapper);
-
-
-        }
-        Iterator::syncAll();
-
-        MPI_Barrier(MPI_COMM_WORLD);
-
-    }
-
-    void setNumBuffers(int numBuffers)
+    void setupBuffers()
     {
         outgoingSize = 0;
         incommingSize = 0;
@@ -213,26 +188,25 @@ public:
             incommingSize += incommingGlobalKeys[target.second].size();
         }
 
-        numBuff = numBuffers;
         Iterator::syncAll();
 
-        outgoingBuffers.resize(outgoingSize * numBuff);
-        incommingBuffers.resize(incommingSize * numBuff);
+        outgoingBuffers.resize(outgoingSize * numBuffers);
+        incommingBuffers.resize(incommingSize * numBuffers);
 
         #ifdef GPU
 #ifdef ENABLE_GDR
-     outgoingBuffers.resize(outgoingSize * numBuff);
-     incommingBuffers.resize(incommingSize * numBuff);
+     outgoingBuffers.resize(outgoingSize * numBuffers);
+     incommingBuffers.resize(incommingSize * numBuffers);
 #else
-     outgoingBuffers_dev.resize(outgoingSize * numBuff);
-     incommingBuffers_dev.resize(incommingSize * numBuff);
+     outgoingBuffers_dev.resize(outgoingSize * numBuffers);
+     incommingBuffers_dev.resize(incommingSize * numBuffers);
 
-     outgoingBuffers.resize(outgoingSize * numBuff);
-     incommingBuffers.resize(incommingSize * numBuff);
+     outgoingBuffers.resize(outgoingSize * numBuffers);
+     incommingBuffers.resize(incommingSize * numBuffers);
 #endif
 #else
-     outgoingBuffers.resize(outgoingSize * numBuff);
-     incommingBuffers.resize(incommingSize * numBuff);
+     outgoingBuffers.resize(outgoingSize * numBuffers);
+     incommingBuffers.resize(incommingSize * numBuffers);
 #endif
 
         outRequests.resize(outgoingTargets.size());
@@ -253,42 +227,50 @@ public:
     template<class ...Tdat, std::size_t... ints>
     DEVCALLABLE
     static void packBlock(int ind, std::tuple<Tdat...> dataBuffers, T* toPtr, pInd_t *indexes, std::integer_sequence<std::size_t, ints...>){
-        //
         pInd_t fromInd = indexes[ind];
         (( toPtr[(ind * std::tuple_size<std::tuple<Tdat...>>())+ ints] = std::get<ints>(dataBuffers)->data()[fromInd] ), ...);
-
     }
+
+
+
 
     template<typename... Tdat>
     void packAllCommData(std::tuple<Tdat...> dataBuffers) {
+        if (outgoingIndexes.size() == 0)
+            return;
+
+    auto range = xvtxRangeStart("gather");
+
+
+
+        auto gatherBuffer = outgoingBuffers.data();
 
 #if defined(GPU) && !defined(ENABLE_GDR)
-        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int ind, CommunicatorPacked<T> &comm){
-            packBlock(ind, dataBuffers, comm.outgoingBuffers_dev.data(), comm.outgoingIndexes.data(), std::make_index_sequence<sizeof...(Tdat)>());
-        }, outgoingIndexes.size(), *this);
-        getErrorDev(devMemcpy(outgoingBuffers.data(), outgoingBuffers_dev.data(),
-                              sizeof(T) * outgoingBuffers.size(), devMemcpyDefault));
-#else
-        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int ind, CommunicatorPacked<T> &comm){
-            packBlock(ind, dataBuffers, comm.outgoingBuffers.data(), comm.outgoingIndexes.data(), std::make_index_sequence<sizeof...(Tdat)>());
-        }, outgoingIndexes.size(), *this);
+        gatherBuffer = outgoingBuffers_dev.data();
 #endif
+/*
+        int max = outgoingIndexes.size();
+        dim3 block = {32, 6};
+        dim3 grid = {1 + (max / block.x)};
+
+        getErrorDev((CommunicatorPackedKernels::gatherPackedKern2D<<<grid, block>>> (
+            outgoingIndexes.size(), outgoingIndexes.data(), gatherBuffer, dataBuffers)));
         Iterator::syncAll();
-        /*
-#ifdef GPU
-        auto [block, grid] = Iterator::IteratorGPU::getGrid(outgoingIndexes.size(), 128);
-        getErrorDev(((CommunicatorPackedKernels::gatherPackedKern<<<grid, block,0,stream>>>(
-                            outgoingIndexes.size(), outgoingIndexes.data(), outgoingBuffers_dev.data(),
-                            std::get<0>(dataBuffers)->data(),
-                            std::get<1>(dataBuffers)->data(),
-                            std::get<2>(dataBuffers)->data(),
-                            std::get<3>(dataBuffers)->data(),
-                            std::get<4>(dataBuffers)->data(),
-                            std::get<5>(dataBuffers)->data()
-                    ))));
-#else
-#endif
 */
+
+        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int ind, CommunicatorPacked<T, numBuffers> &comm){
+            packBlock(ind, dataBuffers, gatherBuffer, comm.outgoingIndexes.data(), std::make_index_sequence<sizeof...(Tdat)>());
+        }, outgoingIndexes.size(), *this);
+
+
+#if defined(GPU) && !defined(ENABLE_GDR)
+        getErrorDevApi(devMemcpy(outgoingBuffers.data(), gatherBuffer,
+            sizeof(T) * outgoingBuffers.size(), devMemcpyDefault));
+#endif
+
+        Iterator::syncAll();
+        xvtxRangeEnd(range);
+
     }
 
     template<class ...Tdat, std::size_t... ints>
@@ -302,59 +284,47 @@ public:
 
     template<typename... Tdat>
     void unpackAllCommData(std::tuple<Tdat...> dataBuffers) {
+        if (incommingIndexes.size() == 0)
+            return;
+    auto range = xvtxRangeStart("scatter");
 
+        auto scatterBuffer = incommingBuffers.data();
 #if defined(GPU) && !defined(ENABLE_GDR)
-        getErrorDev(devMemcpy(incommingBuffers_dev.data(), incommingBuffers.data(),
-                                    sizeof(T)*incommingBuffers.size(), devMemcpyDefault));
+        scatterBuffer = incommingBuffers_dev.data();
 
-        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int ind, CommunicatorPacked<T> &comm){
-            unPackBlock(ind, dataBuffers, comm.incommingBuffers_dev.data(), comm.incommingIndexes.data(), std::make_index_sequence<sizeof...(Tdat)>());
-        }, incommingIndexes.size(), *this);
-#else
-        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int ind, CommunicatorPacked<T> &comm){
-            unPackBlock(ind, dataBuffers, comm.incommingBuffers.data(), comm.incommingIndexes.data(), std::make_index_sequence<sizeof...(Tdat)>());
-        }, incommingIndexes.size(), *this);
+        getErrorDevApi(devMemcpy(scatterBuffer, incommingBuffers.data(),
+            sizeof(T)*incommingBuffers.size(), devMemcpyDefault));
+
+
 #endif
 
+/*
+        int max = incommingIndexes.size();
+        dim3 block = {32, 6};
+        dim3 grid = {1 + (max / block.x)};
+
+        getErrorDev((CommunicatorPackedKernels::scatterPackedKern2D<<<grid, block>>> (
+            incommingIndexes.size(), incommingIndexes.data(), scatterBuffer, dataBuffers)));
         Iterator::syncAll();
-        /*
-#ifdef GPU
-        auto [block, grid] = Iterator::IteratorGPU::getGrid(incommingIndexes.size(), 128);
-        getErrorDev(((CommunicatorPackedKernels::scatterPackedKern<<<grid, block,0,stream>>>(
-                            incommingIndexes.size(), incommingIndexes.data(), incommingBuffers_dev.data(),
-                            std::get<5>(dataBuffers)->data(),
-                            std::get<4>(dataBuffers)->data(),
-                            std::get<3>(dataBuffers)->data(),
-                            std::get<2>(dataBuffers)->data(),
-                            std::get<1>(dataBuffers)->data(),
-                            std::get<0>(dataBuffers)->data()
-                    ))));
-#else
-#endif
-         */
+*/
+
+        Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int ind, CommunicatorPacked<T, numBuffers> &comm){
+            unPackBlock(ind, dataBuffers, scatterBuffer, comm.incommingIndexes.data(), std::make_index_sequence<sizeof...(Tdat)>());
+        }, incommingIndexes.size(), *this);
+
+        xvtxRangeEnd(range);
+
     }
 
     void postRecvs() {
-        int scale = 1;
-        MPI_Datatype type;
-
-        if (std::is_same<T, double>::value) {
-            type = MPI_DOUBLE;
-        } else if (std::is_same<T, bool>::value) {
-            type = MPI_BYTE;
-        } else if (std::is_same<T, float>::value) {
-            type = MPI_FLOAT;
-        } else {
-            std::cout << "non implemented communicator " << std::endl;
-            exit(0);
-        }
+        MPI_Datatype type = getMPIType<T>();
 
         int reqIndIn = 0;
         for (const auto &target: incommingTargets) {
             //
-            T *ptr = &(incommingBuffers.data()[incommingStarts[target.second] * numBuff]);
+            T *ptr = &(incommingBuffers.data()[incommingStarts[target.second] * numBuffers]);
             MPI_Irecv(ptr,
-                      (incommingEnds[target.second] - incommingStarts[target.second]) * scale * numBuff,
+                      (incommingEnds[target.second] - incommingStarts[target.second]) * numBuffers,
                       type, target.first, tagStart, MPI_COMM_WORLD, &inRequests[reqIndIn]);
             reqIndIn++;
         }
@@ -362,35 +332,22 @@ public:
     }
 
     void postSends() {
-        int scale = 1;
-        MPI_Datatype type;
-
-        if (std::is_same<T, double>::value) {
-            type = MPI_DOUBLE;
-        } else if (std::is_same<T, bool>::value) {
-            type = MPI_BYTE;
-        } else if (std::is_same<T, float>::value) {
-            type = MPI_FLOAT;
-        } else {
-            std::cout << "non implemented communicator " << std::endl;
-            exit(0);
-        }
+        MPI_Datatype type = getMPIType<T>();
 
         int reqIndOut = 0;
         for (const auto &target: outgoingTargets) {
             //
             const auto start{std::chrono::steady_clock::now()};
-            T *ptr = &(outgoingBuffers.data()[outgoingStarts[target.second] * numBuff]);
+            T *ptr = &(outgoingBuffers.data()[outgoingStarts[target.second] * numBuffers]);
 
             MPI_Isend(ptr,
-                      (outgoingEnds[target.second] - outgoingStarts[target.second]) * scale * numBuff,
+                      (outgoingEnds[target.second] - outgoingStarts[target.second]) * numBuffers,
                       type, target.first, tagStart, MPI_COMM_WORLD, &outRequests[reqIndOut]);
             reqIndOut++;
 
             const auto end{std::chrono::steady_clock::now()};
             const std::chrono::duration<double> elapsed_seconds{end - start};
         }
-
     }
 
     void syncRecvs() {
@@ -401,8 +358,6 @@ public:
         MPI_Waitall(outRequests.size(), outRequests.data(), MPI_STATUSES_IGNORE);
     }
 
-
-
     void invert()
     {
         //
@@ -411,61 +366,10 @@ public:
 
         std::swap(outgoingGlobalKeys, incommingGlobalKeys);
 
-        std::swap(outgoingBuffers, incommingBuffers);
+        outgoingBuffers.resize(incommingSize);
+        incommingBuffers.resize(outgoingSize);
         std::swap(outRequests, inRequests);
     }
-
-    template<class Tind>
-    void indirectIndexes(ManVec<Tind> &indirectIncommingAddresses, ManVec<Tind> &indirectOutgoingAddresses){
-        for (int i = 0; i < outgoingIndexes.size(); ++i) {
-            //
-            outgoingIndexes[i] = indirectOutgoingAddresses[outgoingIndexes[i]];
-        }
-        for (int i = 0; i < incommingIndexes.size(); ++i) {
-            //
-            incommingIndexes[i] = indirectIncommingAddresses[incommingIndexes[i]];
-        }
-
-    }
-
-    void initFromTransporter(TransporterV2 &transport){
-
-        outgoingGlobalKeys.resize(transport.outTargets.size());
-        incommingGlobalKeys.resize(transport.inTargets.size());
-        int self = getLocalRank();
-
-        int j = 0;
-        for (auto &target: transport.outTargets) {
-            outgoingTargets[target.targetRank] = j;
-
-            outgoingGlobalKeys[j].resize(target.globalKeys.size());
-            auto *outgoingKeys = outgoingGlobalKeys[j].ptr;
-            // todo fix names
-            auto *outgoingObjs = target.globalKeys.ptr;
-            Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i) {
-                outgoingKeys[i] = outgoingObjs[i];
-            }, target.count);
-
-            j++;
-        }
-        j = 0;
-        for (auto &target: transport.inTargets) {
-            incommingTargets[target.targetRank] = j;
-
-            incommingGlobalKeys[j].resize(target.globalKeys.size());
-            auto *incommingKeys = incommingGlobalKeys[j].ptr;
-            // todo fix names
-            auto *incommingObjs = target.globalKeys.ptr;
-            Iterator::iterate(OffloadExec(), [=]DEVCALLABLE(int i) {
-                incommingKeys[i] = incommingObjs[i];
-            }, target.count);
-            j++;
-        }
-
-        Iterator::syncAll();
-
-    }
-
 };
 
 

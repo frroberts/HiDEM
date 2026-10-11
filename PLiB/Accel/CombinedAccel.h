@@ -10,10 +10,12 @@
 
 #include <ParallelSelect.h>
 #include <TupleHelpers.h>
-#include <Transport/Communicator.h>
+#include <Transport/CommunicatorIndividual.h>
 #include <Transport/CommunicatorPacked.h>
 
 #include "LoggerV2/RangeCollection.h"
+
+#include <Generators/ElementrayLink.h>
 
 
 class CombinedAccel : public ManagedParent {
@@ -27,11 +29,25 @@ public:
     ManVec<pInd_t> preCommIndexes;
     ManVec<pInd_t> postCommIndexes;
 
-    void generate(ParticleData &pData, LinkData &lData, double searchDistance, double interactDist) {
+    void generateNeighbours(ParticleData &pData, LinkData &lData, double searchDistance, double interactDist) {
         //
-        grid.generate(pData, searchDistance);
-        nList.generateNeighbours(grid, pData, searchDistance, interactDist);
-        lAccel.generateLinks(pData, lData);
+        {
+            RangeV2 r("grid gen", 3);
+            grid.generate(pData, searchDistance);
+        } {
+            RangeV2 r("nlist gen", 3);
+            nList.generateNeighbours(grid, pData, searchDistance, interactDist);
+        }
+    }
+
+    void generateLinks(ParticleData &pData, LinkData &lData, double searchDistance, double interactDist) {
+        {
+            RangeV2 r("llist gen", 3);
+            lAccel.generateLinks(pData, lData);
+        }
+    }
+
+    void generateIndexes(ParticleData &pData, LinkData &lData, double searchDistance, double interactDist) {
     }
 
     template<class T>
@@ -188,7 +204,7 @@ public:
         //
 
         lData.iterateAllLinks(policy, [=] DEVCALLABLE(lInd_t lInd, pInd_t aParticleInd, pInd_t bParticleInd,
-            LinkData &lData, LinkAccel &lAccel) {
+            LinkData &lData, LinkAccelSide &lAccel) {
             auto pack = args.split();
 
             auto partArgs = std::get<0>(pack);
@@ -216,6 +232,64 @@ public:
 
             }
         }, lData, lAccel);
+
+    }
+
+    template<class Policy, class LData, typename LFun, class FullArgs>
+    void iterateLinksRegen(Policy policy, ParticleData &pData, LData &lData,
+                         LFun &lFunc, FullArgs args) {
+        //
+
+        lData.iterateOwnedLinks(policy, [=] DEVCALLABLE(lInd_t lInd, pInd_t aParticleInd, pInd_t bParticleInd,
+            LData &lData, ParticleData &pData, LinkAccelSide &lAccel) {
+            auto pack = args.split();
+
+            auto partArgs = std::get<0>(pack);
+            auto linkSideArgs = std::get<1>(pack);
+            auto linkArgs = std::get<2>(pack);
+
+            auto partA = getAtIndTuple(aParticleInd, partArgs);
+            auto partB = getAtIndTuple(bParticleInd, partArgs);
+            //auto sideA = getAtIndTuple(bParticleInd, partArgs);
+            //auto sizeB = getAtIndTuple(bParticleInd, partArgs);
+
+            uint8_t initialState = lData.state[lInd];
+
+            auto all = std::tuple_cat(partA, partB);
+
+            auto linkVals = getAtIndTuple(lInd, linkArgs);
+
+            callFun2(lFunc, all, linkVals);
+
+            setAtIndTuple(lInd, linkArgs, linkVals);
+
+            uint8_t updatedState = lData.state[lInd];
+            if(updatedState != initialState && updatedState == 0) {
+                // if broken break link in accel if needed
+            }
+            if(updatedState != initialState && updatedState == 1) {
+                // if regenerated compute the new length and zero CT
+
+                lpReal_t xDist = pData.xCord[aParticleInd] - pData.xCord[bParticleInd];
+                lpReal_t yDist = pData.yCord[aParticleInd] - pData.yCord[bParticleInd];
+                lpReal_t zDist = pData.zCord[aParticleInd] - pData.zCord[bParticleInd];
+                lpReal_t currentLength = sqrt((xDist * xDist) + (yDist * yDist) + (zDist * zDist));
+
+
+                ElementaryLink link;
+
+                link.owner = lData.owners[lInd];
+                link.globalKey = lData.globalKeys[lInd];
+                link.globalKeyParticleA = lData.globalKeyEndA[lInd];
+                link.globalKeyParticleB = lData.globalKeyEndB[lInd];
+                link.particleLinkNum = lData.particleLinkNum[lInd];
+                link.state = 1;
+                link.initialLen = currentLength;
+
+                lData.processInitLink(link, lData, lInd, lData.sideIndEndA[lInd], lData.sideIndEndB[lInd]);
+
+            }
+        }, lData, pData, lAccel);
 
     }
 

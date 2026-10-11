@@ -23,19 +23,8 @@ public:
 
         pData.resize(newSize);
 
-        int tupleCombinedSize = std::tuple_size<decltype(pData.getFieldTupleInput())>::value;
-        std::vector<MPI_Request> requests;
-        std::vector<MPI_Datatype> gatherTypes;
-        requests.reserve(outTargets.size() * (tupleCombinedSize));
-        gatherTypes.reserve(outTargets.size() * (tupleCombinedSize));
-
-        transmitFileds(oldSize, requests, gatherTypes, pData.getFieldTupleInput(), 1, outTargets, inTargets);
-
-        MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
-        for(int i = 0; i < gatherTypes.size(); i++){
-            MPI_Type_free(&gatherTypes[i]);
-        }
-
+        transmitFiledsFull(oldSize, pData.getFieldTupleInput(), outTargets, inTargets);
+        
         generateOwnedNonOwned(pData.owners, pData.ownedIndexes, pData.nonOwnedIndexes, pData.numLocal);
     }
 
@@ -47,13 +36,15 @@ public:
         outTargets.resize(numDomains);
 
         for (int i = 0; i < numDomains; ++i){
-            new(&outTargets[i]) TransportTargetV2{};
-            outTargets[i].count = 0;
-            outTargets[i].targetRank = i;//world.domains[i].owner;
+            int pos = world.domains[i].owner;
+            outTargets[pos].count = 0;
+            outTargets[pos].targetRank = world.domains[i].owner;
         }
 
         // world domains are a normal vector, hence a copy here
-        ManVec<Domain> domains(numDomains);
+        ManVec<Domain> domains;
+        domains.resize(numDomains);
+
         for (int i = 0; i < numDomains; ++i) {
             domains[i] = world.domains[i];
         }
@@ -69,16 +60,32 @@ public:
                     if (reassign) {
                         pData.owners[pInd] = d.owner;
                     }
-                    Iterator::atomicIncVal(transporter.outTargets[d.owner].count);
+                    Atomic::atomicIncVal(transporter.outTargets[d.owner].count);
                 }
             }
         }, pData, *this);
 
         Iterator::syncAll();
 
+        int totalCount = 0;
         for (int i = 0; i < numDomains; ++i) {
+            totalCount += outTargets[i].count;
+        }
+
+        indexesOut.resize(totalCount);
+        globalKeysOut.resize(totalCount);
+
+        int offset = 0;
+        for (int i = 0; i < numDomains; ++i) {
+            outTargets[i].offset = offset;
+            outTargets[i].indexesPtr = indexesOut.data() + offset;
+            outTargets[i].globalKeysPtr = globalKeysOut.data() + offset;
+            offset += outTargets[i].count;
+
+            /*
             outTargets[i].indexes.resize(outTargets[i].count);
             outTargets[i].globalKeys.resize(outTargets[i].count);
+            */
             outTargets[i].count = 0;
         }
         Iterator::syncAll();
@@ -91,9 +98,9 @@ public:
                 if (predicate(pInd, pData, d)) {
                     // add to outgoing object
                     int place;
-                    place = Iterator::atomicIncVal(transporter.outTargets[d.owner].count);
-                    transporter.outTargets[d.owner].indexes[place] = pInd;
-                    transporter.outTargets[d.owner].globalKeys[place] = pData.globalKeys[pInd];
+                    place = Atomic::atomicIncVal(transporter.outTargets[d.owner].count);
+                    transporter.outTargets[d.owner].indexesPtr[place] = pInd;
+                    transporter.outTargets[d.owner].globalKeysPtr[place] = pData.globalKeys[pInd];
                 }
             }
 
@@ -101,12 +108,12 @@ public:
         }, pData, *this);
 
         Iterator::syncAll();
-/*
+
         // drop empty outgoing objects
         outTargets.erase(std::remove_if(outTargets.begin(),
                                               outTargets.end(),
                                               [](auto &x) { return x.count == 0; }), outTargets.end());
-*/
+
     }
 
     void getOutgoingHalo(World &world, ParticleDataT &pData) {

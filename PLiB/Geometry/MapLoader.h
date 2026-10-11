@@ -57,7 +57,7 @@ public:
             MapSingle<T> *ptr;
 #ifdef GPU__
             if (devAlloc) {
-                devMallocManaged((void **) &ptr, sizeof(MapSingle<T>));
+                getErrorDevApi(devMallocManaged((void **) &ptr, sizeof(MapSingle<T>)));
                 createMapSingle<<<1, 1>>>(ptr);
             } else
 #endif
@@ -80,9 +80,9 @@ public:
             Map2d<T> *ptr = ptrHost;
 #ifdef GPU__
             if(devAlloc) {
-                devMallocManaged((void **) &ptr, sizeof(Map2d<T>));
+                getErrorDevApi(devMallocManaged((void **) &ptr, sizeof(Map2d<T>)));
                 createMap2d<<<1, 1>>>(ptr);
-                devMemcpy(ptr, ptrHost, sizeof(Map2d<T>), devMemcpyDefault);
+                getErrorDevApi(devMemcpy(ptr, ptrHost, sizeof(Map2d<T>), devMemcpyDefault));
             }
 #endif
             return ptr;
@@ -93,7 +93,7 @@ public:
 #ifdef GPU__
             if(devAlloc)
             {
-                devMallocManaged((void**) &ptr, sizeof(MapSingle<T>));
+                getErrorDevApi(devMallocManaged((void**) &ptr, sizeof(MapSingle<T>)));
                 createMapSingle<<<1,1>>>(ptr);
             }
             else

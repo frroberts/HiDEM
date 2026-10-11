@@ -9,6 +9,9 @@
 #include "../MeshData.h"
 #include "MeshAccel.h"
 #include "../Util/Util.h"
+#include <AtomicOps.h>
+
+#include "../Util/MPIHelpers.h"
 
 class InputMesh : public InputGeometry {
 
@@ -99,9 +102,9 @@ public:
     DEVCALLABLE
     void addForce(int tri, lpReal_t xForce,lpReal_t yForce,lpReal_t zForce){
         //
-        Iterator::atomicAddVal(dataPtr->xFaceForce[tri], xForce);
-        Iterator::atomicAddVal(dataPtr->yFaceForce[tri], yForce);
-        Iterator::atomicAddVal(dataPtr->zFaceForce[tri], zForce);
+        Atomic::atomicAddVal(dataPtr->xFaceForce[tri], xForce);
+        Atomic::atomicAddVal(dataPtr->yFaceForce[tri], yForce);
+        Atomic::atomicAddVal(dataPtr->zFaceForce[tri], zForce);
     }
 
     void zeroForce(){
@@ -118,15 +121,9 @@ public:
         // mpi reduce for forces
         int size = dataPtr->getMeshSize(meshId);
         int start = dataPtr->meshStarts[meshId];
-        if (getLocalRank() == 0) {
-            MPI_Reduce(MPI_IN_PLACE, &dataPtr->xFaceForce[start], size, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
-            MPI_Reduce(MPI_IN_PLACE, &dataPtr->yFaceForce[start], size, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
-            MPI_Reduce(MPI_IN_PLACE, &dataPtr->zFaceForce[start], size, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
-        } else {
-            MPI_Reduce(&dataPtr->xFaceForce[start], &dataPtr->xFaceForce[start], size, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
-            MPI_Reduce(&dataPtr->yFaceForce[start], &dataPtr->yFaceForce[start], size, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
-            MPI_Reduce(&dataPtr->zFaceForce[start], &dataPtr->zFaceForce[start], size, MPI_FLOAT, MPI_SUM, 0, MPI_COMM_WORLD);
-        }
+        MPI_Allreduce(MPI_IN_PLACE, &dataPtr->xFaceForce[start], size, getMPIType<lpReal_t>(), MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(MPI_IN_PLACE, &dataPtr->yFaceForce[start], size, getMPIType<lpReal_t>(), MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(MPI_IN_PLACE, &dataPtr->zFaceForce[start], size, getMPIType<lpReal_t>(), MPI_SUM, MPI_COMM_WORLD);
     }
 };
 

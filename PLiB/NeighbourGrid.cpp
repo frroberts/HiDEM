@@ -137,13 +137,13 @@ void NeighbourGrid::colourParticles(ParticleData &data)
     Iterator::iterate(OffloadExec(), [] DEVCALLABLE (pInd_t i, NeighbourGrid &grid){
         int c = grid.colours[i];
         //atomicAdd(&(bucketSizes[c]), 1);
-        Iterator::atomicIncVal(grid.bucketSizes[c]);
+        Atomic::atomicIncVal(grid.bucketSizes[c]);
         }, colours.size(), *this);
 
 
     Iterator::syncAll();
 
-    scanner.exclusive(bucketSizes, bucketStarts);
+    ParallelScan::exclusive(bucketSizes, bucketStarts);
     Iterator::syncAll();
 
 }
@@ -160,7 +160,7 @@ void NeighbourGrid::generateIterationList(ParticleData &data)
     // todo add parallel stl here once its properly available
     // todo does not really need to be sort, more a histogram of values and i know the bucket sizes
     // look at how the renderer does it
-    sorter.sortIndirect(iterationOrder, colours);
+    ParallelSort::sortIndirect(iterationOrder, colours);
 
     // set up the collected iteration orders here
     bucketSizesColor.resize(totalCells);
@@ -181,7 +181,7 @@ void NeighbourGrid::generateIterationList(ParticleData &data)
 
     size_t sum = reducer.sum(bucketSizesColor);
 
-    scanner.exclusive(bucketSizesColor, bucketStartsColor);
+    ParallelScan::exclusive(bucketSizesColor, bucketStartsColor);
 
     iterationOrderPerColor.resize(sum);
 

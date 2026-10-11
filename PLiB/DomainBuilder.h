@@ -181,12 +181,14 @@ public:
     }
 
 
-    static void generateBalancedDomains(ManVec<double> &xCord, ManVec<double> &yCord, ManVec<double> &zCord, ManVec<double> &weights, double haloSize, double tolerance, Domain &bounding, World &world) {
+    static void generateBalancedDomains(ManVec<double> &xCord, ManVec<double> &yCord, ManVec<double> &zCord, ManVec<double> &weights,
+        double haloSize, double tolerance, Domain bounding, World &world) {
         //
         RangeV2 r("domain generate", 3);
 
         Logger::writeAtFirst("re-balancing \n");
 
+        /*
         double xMax = std::numeric_limits<double>::min();
         double yMax = std::numeric_limits<double>::min();
         double zMax = std::numeric_limits<double>::min();
@@ -198,7 +200,18 @@ public:
         reducer.minMax(xMin, xMax, xCord);
         reducer.minMax(yMin, yMax, yCord);
         reducer.minMax(zMin, zMax, zCord);
+        */
 
+        auto [xMin, xMax] = stx::minmax_element(EXECPOLICY xCord.begin(), xCord.end());
+        auto [yMin, yMax] = stx::minmax_element(EXECPOLICY yCord.begin(), yCord.end());
+        auto [zMin, zMax] = stx::minmax_element(EXECPOLICY zCord.begin(), zCord.end());
+
+        double xMax_local = *xMax;
+        double yMax_local = *yMax;
+        double zMax_local = *zMax;
+        double xMin_local = *xMin;
+        double yMin_local = *yMin;
+        double zMin_local = *zMin;
 
         double xMax_global;
         double yMax_global;
@@ -206,13 +219,13 @@ public:
         double xMin_global;
         double yMin_global;
         double zMin_global;
-        MPI_Allreduce(&xMax, &xMax_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        MPI_Allreduce(&yMax, &yMax_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-        MPI_Allreduce(&zMax, &zMax_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&xMax_local, &xMax_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&yMax_local, &yMax_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(&zMax_local, &zMax_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
-        MPI_Allreduce(&xMin, &xMin_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Allreduce(&yMin, &yMin_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
-        MPI_Allreduce(&zMin, &zMin_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&xMin_local, &xMin_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&yMin_local, &yMin_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&zMin_local, &zMin_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
 
         bounding.lower = {xMin_global, yMin_global, zMin_global};
         bounding.upper = {xMax_global, yMax_global, zMax_global};

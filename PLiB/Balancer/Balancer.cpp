@@ -15,19 +15,27 @@
 #include "../Logger/Logger.h"
 #include "../Util/Util.h"
 
-Domain Balancer::getMidpoint(Domain bounding, SplitDim splitDir, Real3 prevSize, double target, double current, int iter) {
+#include <Iterator.h>
+#include <ThrustHelper.h>
+
+
+Domain Balancer::getMidpoint(int *indexPtr, int indexCount, Domain bounding, SplitDim splitDir, Real3 prevSize,
+    double target, double current, int iter) {
     //  logic of what size we use is wrong
+
     double sign = 1;
 
     if ((current <= target + target * tolerance) && (current >= target - target * tolerance)) {
         if (verbose)
-            Logger::writeAtFirst( getIndent(iter) + std::to_string(current) + " load within tolerance returning..\n");
+            Logger::writeAtFirst( getIndent(iter) + std::to_string(current) + " load within tolerance returning, "+std::to_string(iter)+" steps\n");
+        bounding.load = current;
         return bounding;
     }
 
     if (iter > maxDepth) {
         if (verbose)
             Logger::writeAtFirst( getIndent(iter) + "at max iter giving up \n");
+        bounding.load = current;
         return bounding;
     }
 
@@ -35,20 +43,20 @@ Domain Balancer::getMidpoint(Domain bounding, SplitDim splitDir, Real3 prevSize,
         // go down in size
         sign = -1;
         if (verbose)
-            Logger::writeAtFirst( getIndent(iter) + std::to_string(current) + " down in size ");
+            Logger::writeAtFirst( getIndent(iter) + " target " + std::to_string(target) + " " +  std::to_string(current) + " down in size ");
 
     } else if (current < (target)) {
         // go up in size
         sign = 1;
         if (verbose)
-            Logger::writeAtFirst( getIndent(iter) + std::to_string(current) + " up in size ");
+            Logger::writeAtFirst( getIndent(iter) + " target " + std::to_string(target) + " " +  std::to_string(current) + " up in size ");
     }
 
     Real3 size = prevSize;
 
     switch (splitDir) {
         case SplitDim::X:
-            size.x /= 2;
+            size.x /= 2.0;
             if (verbose)
                 Logger::writeAtFirst( "X old upper " + std::to_string(bounding.upper.x));
             bounding.upper.x += sign * size.x;
@@ -56,7 +64,7 @@ Domain Balancer::getMidpoint(Domain bounding, SplitDim splitDir, Real3 prevSize,
                 Logger::writeAtFirst( " new upper " + std::to_string(bounding.upper.x) + "\n");
             break;
         case SplitDim::Y:
-            size.y /= 2;
+            size.y /= 2.0;
             if (verbose)
                 Logger::writeAtFirst( "Y old upper " + std::to_string(bounding.upper.y));
             bounding.upper.y += sign * size.y;
@@ -64,7 +72,7 @@ Domain Balancer::getMidpoint(Domain bounding, SplitDim splitDir, Real3 prevSize,
                 Logger::writeAtFirst( " new upper " + std::to_string(bounding.upper.y) + "\n");
             break;
         case SplitDim::Z:
-            size.z /= 2;
+            size.z /= 2.0;
             if (verbose)
                 Logger::writeAtFirst( "Z old upper " + std::to_string(bounding.upper.z));
             bounding.upper.z += sign * size.z;
@@ -73,12 +81,9 @@ Domain Balancer::getMidpoint(Domain bounding, SplitDim splitDir, Real3 prevSize,
             break;
     }
 
-    double next = getDomainLoad(bounding, numParticles);
-    //std::cout << target << " " << next << " " << current << std::endl;
-    //if(abs(next-target) > abs(current-target))
-    //    return bounding;
-    return getMidpoint(bounding, splitDir, size, target, next, ++iter);
+    double next = getDomainLoad(bounding, indexPtr, indexCount);
 
+    return getMidpoint(indexPtr, indexCount, bounding, splitDir, size, target, next, ++iter);
 }
 
 
@@ -113,7 +118,7 @@ Domain Balancer::getUpper(Domain parent, Domain lower, SplitDim splitDir) {
 
 
 
-void Balancer::split(Domain parent, int numDomains) {
+void Balancer::split(Domain parent, int numDomains, int *indexPtr, int indexCount) {
     if (numDomains == 1) {
         domains.push_back(parent);
         return;
@@ -123,51 +128,77 @@ void Balancer::split(Domain parent, int numDomains) {
     double upperBlock = std::ceil(numDomains / 2.0);
     double ratio = lowerBlock / numDomains;
 
-    int64_t globalLoad = getDomainLoad(parent, numParticles);
+    int64_t globalLoad = parent.load;
     int64_t halfLoad = globalLoad * ratio;
 
-    auto lowerPartX = getMidpoint(parent, SplitDim::X, parent.getSize(), halfLoad, getDomainLoad(parent, numParticles));
-    auto upperPartX = getUpper(parent, lowerPartX, SplitDim::X);
+    auto size = parent.getSize();
 
-    auto lowerPartY = getMidpoint(parent, SplitDim::Y, parent.getSize(), halfLoad, getDomainLoad(parent, numParticles));
-    auto upperPartY = getUpper(parent, lowerPartY, SplitDim::Y);
-
-    auto lowerPartZ = getMidpoint(parent, SplitDim::Z, parent.getSize(), halfLoad, getDomainLoad(parent, numParticles));
-    auto upperPartZ = getUpper(parent, lowerPartZ, SplitDim::Z);
-
-    double xSurf = lowerPartX.getSurface() + upperPartX.getSurface();
-    double ySurf = lowerPartY.getSurface() + upperPartY.getSurface();
-    double zSurf = lowerPartZ.getSurface() + upperPartZ.getSurface();
-
-    Domain upperPart;
-    Domain lowerPart;
-
-    if(xSurf < ySurf && xSurf < zSurf){
-        upperPart = upperPartX;
-        lowerPart = lowerPartX;
-    } else if(zSurf < xSurf && zSurf < ySurf && zActive){
-        upperPart = upperPartZ;
-        lowerPart = lowerPartZ;
-    } else { // (ySurf < xSurf && ySurf < zSurf)
-        upperPart = upperPartY;
-        lowerPart = lowerPartY;
+    SplitDim splitDir = SplitDim::Y;
+    if (zActive)
+    {
+        if (size.x > size.y && size.x > size.z)
+        {
+            splitDir = SplitDim::X;
+        }
+        else if (size.z > size.x && size.z > size.y)
+        {
+            splitDir = SplitDim::Z;
+        }
+    } else
+    {
+        if (size.x > size.y)
+        {
+            splitDir = SplitDim::X;
+        }
     }
 
-    split(lowerPart, static_cast<int>(lowerBlock));
-    split(upperPart, static_cast<int>(upperBlock));
+    Domain lowerPart = getMidpoint(indexPtr, indexCount, parent, splitDir, parent.getSize(), halfLoad, globalLoad);
+    Domain upperPart = getUpper(parent, lowerPart, splitDir);
+    upperPart.load = globalLoad - lowerPart.load;
+
+    double *xPtr = xCords->data();
+    double *yPtr = yCords->data();
+    double *zPtr = zCords->data();
+
+    auto point = stx::stable_partition( EXECPOLICY
+        indexPtr, indexPtr+indexCount,
+        [=] DEVCALLABLE (int i)
+        {
+            double x = xPtr[i];
+            double y = yPtr[i];
+            double z = zPtr[i];
+
+            bool in = lowerPart.within(Real3{x, y, z});
+            return in;
+        });
+    int splitCount = point-indexPtr;
+
+    split(lowerPart, static_cast<int>(lowerBlock), indexPtr, splitCount);
+    split(upperPart, static_cast<int>(upperBlock), indexPtr+splitCount, indexCount-splitCount);
 }
 
 std::vector<Domain> Balancer::balance(int numDomains, double halo, Domain bounding) {
     //
+    // possible optimization here would be to shuffle the coordinates and weights over ranks so that lower down there would be more GPUs active
     numParticles = xCords->size();
+    double localLoad = stx::reduce(EXECPOLICY weights->begin(), weights->end(), 0, std::plus<double>());
+    MPI_Allreduce(&localLoad, &bounding.load, 1, MPI_DOUBLE, MPI_SUM, comm);
+    // bounding.load = numParticles;
+    ManVec<int> indexes;
+    indexes.resize(numParticles);
+    int *indexPtr = indexes.data();
+    Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i) {
+        indexPtr[i] = i;
+    }, numParticles);
+    Iterator::syncAll();
 
-    split(bounding, numDomains);
+    split(bounding, numDomains, indexes.data(), indexes.size());
 
     std::vector<double> localLoads;
     std::vector<double> allLoads;
     allLoads.resize(numDomains*numDomains);
     for (auto &d: domains) {
-        localLoads.push_back(getDomainLocalLoad(d, numParticles));
+        localLoads.push_back(d.load);
     }
     // odd behaviour without barrier
     MPI_Barrier(comm);
@@ -184,9 +215,8 @@ std::vector<Domain> Balancer::balance(int numDomains, double halo, Domain boundi
     int i = 0;
     for (auto &d: domains) {
         d.setHalo(halo);
-        double load = getDomainLoad(d, numParticles);
-        maxLoad = std::max(maxLoad, load);
-        minLoad = std::min(minLoad, load);
+        maxLoad = std::max(maxLoad, d.load);
+        minLoad = std::min(minLoad, d.load);
         int bestOwner = -1;
         double bestCount = -1;
         for(const auto &avail: remainingOwners)
@@ -202,94 +232,42 @@ std::vector<Domain> Balancer::balance(int numDomains, double halo, Domain boundi
                                              remainingOwners.end(),
                                              [&](auto x) { return x == bestOwner; }), remainingOwners.end());
         i++;
-        d.load = load;
     }
 
-    /*
-    if(getLocalRank() == 0) {
-        for (int i = 0; i < numDomains; ++i) {
-            for (int j = 0; j < numDomains; ++j) {
-                if(domains[i].owner == j)
-                    std::cout << "[";
-                std::cout << allLoads[(i * numDomains) + j];
-                if(domains[i].owner == j)
-                    std::cout << "]";
-                std::cout << " ";
-            }
-            std::cout << std::endl;
-        }
-
-        for (auto d: domains) {
-            std::cout << "newPoint([" << d.upper.x << "," << d.upper.y << "," << d.upper.z << "],"
-                      << "[" << d.lower.x << "," << d.lower.y << "," << d.lower.z << "]," << d.owner << ")"
-                      << std::endl;
-
-            std::cout << "newPoint([" << d.upperHalo.x << "," << d.upperHalo.y << "," << d.upperHalo.z << "],"
-                      << "[" << d.lowerHalo.x << "," << d.lowerHalo.y << "," << d.lowerHalo.z << "]," << d.owner << ")"
-                      << std::endl;
-        }
-    }
-     */
-
-    //Logger::writeAtFirst("Domain loads : "+std::to_string(loads)+"\n");
     Logger::writeAtFirst("balance quality: "+std::to_string(maxLoad / minLoad)+" \n");
-//    Logger::writeAtFirst(fmt::format("Domain loads : {}\n", loads));
-//    Logger::writeAtFirst(fmt::format("balance quality: {} \n", maxLoad / minLoad));
+
     return domains;
 }
 
-int64_t Balancer::getDomainLoad(Domain &dom, int numParticles)  {
-    int64_t localLoad = 0;
-    int64_t globalLoad = 0;
+double Balancer::getDomainLoad(Domain &dom, int *indexPtr, int indexCount)  {
+    double localLoad = 0;
+    double globalLoad = 0;
 
-    localLoad = getDomainLocalLoad(dom, numParticles);
+    localLoad = getDomainLocalLoad(dom, indexPtr, indexCount);
 
-    /*
-#pragma omp parallel for reduction(+:localLoad)
-    for (int i = 0; i < numParticles; ++i) {
-        if (dom.within({(*xCords)[i], (*yCords)[i], (*zCords)[i]})) {
-            localLoad += (*weights)[i];
-        }
-    }
-     */
-    MPI_Allreduce(&localLoad, &globalLoad, 1, MPI_INT64_T, MPI_SUM, comm);
+    MPI_Allreduce(&localLoad, &globalLoad, 1, MPI_DOUBLE, MPI_SUM, comm);
     return globalLoad;
 }
 
-int64_t Balancer::getDomainLocalLoad(const Domain &dom, int numParticles) {
-    int64_t localLoad = 0;
-    double *xPtr = xCords->ptr;
-    double *yPtr = yCords->ptr;
-    double *zPtr = zCords->ptr;
-    localLoad = reducer.reduce<int>(numParticles, []DEVCALLABLE(int a, int b) { return a + b; }, [=]DEVCALLABLE(int i) {
-        double x = xPtr[i];
-        double y = yPtr[i];
-        double z = zPtr[i];
-        bool xIn;
-        if (dom.lower.x == dom.upper.x && x == dom.lower.x)
-            xIn = true;
-        else
-            xIn = (x >= dom.lower.x && x < dom.upper.x);
+double Balancer::getDomainLocalLoad(Domain &dom, int *indexPtr, int indexCount) {
+    double localLoad = 0;
+    double *xPtr = xCords->data();
+    double *yPtr = yCords->data();
+    double *zPtr = zCords->data();
+    double *wPtr = weights->data();
 
-        bool yIn;
-        if (dom.lower.y == dom.upper.y && y == dom.lower.y)
-            yIn = true;
-        else
-            yIn = (y >= dom.lower.y && y < dom.upper.y);
+    // std::transform_reduce
 
-        bool zIn;
-        if (dom.lower.z == dom.upper.z && z == dom.lower.z)
-            zIn = true;
-        else
-            zIn = (z >= dom.lower.z && z < dom.upper.z);
+    localLoad = ParStd::transform_reduce(EXECPOLICY indexPtr, indexPtr + indexCount, 0, [] DEVCALLABLE (int a, int b) -> int
+        {return a+b;}, [=] DEVCALLABLE  (int ind) -> int
+    {
+        double x = xPtr[ind];
+        double y = yPtr[ind];
+        double z = zPtr[ind];
 
-        bool within = xIn && yIn && zIn;
-
-        if (within) {
-            return 1;
-        }
-        return 0;
+        return dom.within(Real3{x,y,z}) * wPtr[ind]; // should incorporate weight
     });
+
     return localLoad;
 }
 

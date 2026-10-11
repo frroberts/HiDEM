@@ -29,18 +29,19 @@ if (ENABLE_CATCH)
             # TransporterTester.cpp
             # LoggerTester.cpp
             # HDF5ReadWriteTest.cpp
-            # BalancerTester.cpp
+            BalancerTester.cpp
             # MeshTester.cpp
             # TomlTest.cpp
             # GeometryBuilderTest.cpp
              ../External/fmt/src/os.cc
              ../External/fmt/src/format.cc
             # LayoutTester.cpp
-            # GlobalLocalMappterTest.cpp
             # ManVecTester.cpp
             # UnitBlockGeneratorTester.cpp
             # VTUOutTester.cpp
-            SimdTester.cpp
+            # SimdTester.cpp
+            # GlobalLocalMappterTest.cpp
+            # HiDEMCheckpointTester.cpp
     )
 
     if (ENABLE_SIMD)
@@ -75,7 +76,6 @@ if (ENABLE_CATCH)
     if (ENABLE_CUDA)
         target_link_libraries(Tester PRIVATE ${CUDA_LIBRARIES})
         target_include_directories(Tester PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
-        target_compile_definitions(Tester PUBLIC GPU)
         set_source_files_properties(
                 Tests/testMain.cpp
                 Tests/IteratorTester.cpp
@@ -86,6 +86,9 @@ if (ENABLE_CATCH)
                 Tests/CommunicatorTesterSingle.cpp
                 Tests/TransporterTester.cpp
                 Tests/HDF5ReadWriteTest.cpp
+                BalancerTester.cpp
+                GlobalLocalMappterTest.cpp
+                HiDEMCheckpointTester.cpp
                 PROPERTIES LANGUAGE CUDA)
     endif ()
 

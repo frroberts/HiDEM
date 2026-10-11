@@ -6,23 +6,26 @@ project(PHell LANGUAGES C CXX)
 include(CheckLanguage)
 include(CheckCXXCompilerFlag)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -O3")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -O3 -g")# -lstdc++exp ")
 
 option(ENABLE_CUDA "Enable CUDA" OFF)
 option(ENABLE_HIP "Enable HIP" OFF)
 option(ENABLE_OMP "Enable OpenMP" ON)
 
 option(ENABLE_CATCH "Enable catch2 tests" OFF)
-option(ENABLE_HDF5 "Enable HDF5 output" ON)
 option(ENABLE_PSTL "Enable parallel stuff from stl" OFF)
 option(ENABLE_FMATH "Enable fast math" ON)
 option(ENABLE_RUN_REPRODUCE "Enable run to run reproducibility" ON)
+option(ENABLE_HDF5 "Enables HDF5, disabling will break all HDF5 IO and checkpointing" ON)
 
 option(ENABLE_ASAN "Enables address sanitizer builds" OFF)
 option(ENABLE_UBSAN "Enables undefined behavior sanitizer builds" OFF)
+
+option(ENABLE_STACKTRACE "Enable stacktraces from certain failures (requires GCC)" OFF)
+
 
 ## optimizations
 option(ENABLE_SIMD256 "Enable AVX2 (256 bit vectors)" OFF)
@@ -43,12 +46,20 @@ option(SET_FP32 "Sets all but coordinates to fp32, not including CT" ON)
 option(SET_CT_FP32 "Sets CT storage values to fp32" ON)
 option(SET_LOCAL_ID_64 "Sets local indexes to be 64 bit" OFF)
 
+
+option(ENABLE_STACKTRACE "Enable c++23 stacktrace (on supported compilers)" OFF)
+
+
 if(ENABLE_SIMD)
     # message( FATAL_ERROR "SIMD disabled in current version" )
 endif()
 
 if(ENABLE_SIMD AND (ENABLE_CUDA OR ENABLE_HIP))
     message( FATAL_ERROR "SIMD and GPU cannot be enabled at the same time")
+endif()
+
+if(ENABLE_STACKTRACE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -lstdc++exp")
 endif()
 
 if(ENABLE_FMATH)
@@ -74,8 +85,8 @@ endif ()
 
 if (ENABLE_CUDA)
     check_language(CUDA REQUIRED)
-    set(CMAKE_CUDA_ARCHITECTURES "70" "75" "86")
-    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr -std=c++20 -lineinfo -g -allow-unsupported-compiler" )
+    set(CMAKE_CUDA_ARCHITECTURES "70" "75" "86" "80")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr -std=c++20 -lineinfo -g -allow-unsupported-compiler -lcurand" )
 
     enable_language(CUDA)
 
@@ -104,7 +115,9 @@ if (MPI_FOUND)
     include_directories(SYSTEM ${MPI_INCLUDE_PATH})
 endif ()
 
-find_package(HDF5 COMPONENTS C)
+if (ENABLE_HDF5)
+    find_package(HDF5 COMPONENTS C)
+endif()
 
 set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY true)
 

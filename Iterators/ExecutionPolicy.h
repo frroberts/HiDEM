@@ -7,12 +7,29 @@
 
 #include "DevPortabilityLayer.h"
 
+
+#ifdef GPU
+#include <thrust/partition.h>
+#define EXECPOLICY thrust::device,
+namespace stx = thrust;
+#else
+namespace stx = std;
 #ifdef ENABLE_PSTL
 #include <execution>
 // not the greatest hack but apparently even serial policies require tbb
-#define EXECPOLICY std::execution::par,
+#define EXECPOLICY std::execution::par_unseq,
 #else
 #define EXECPOLICY
+#endif
+#endif
+
+
+#ifdef ENABLE_PSTL
+#include <execution>
+// not the greatest hack but apparently even serial policies require tbb
+#define STDEXECPOLICY std::execution::par_unseq,
+#else
+#define STDEXECPOLICY
 #endif
 
 

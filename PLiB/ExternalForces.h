@@ -23,6 +23,24 @@
 
 class ExternalForces : public ManagedParent{
 public:
+
+    ~ExternalForces() {
+        if (allocated) {
+/*
+        std::cout << "ExternalForces::~ExternalForces()" << std::endl;
+            delete xForce;
+            delete yForce;
+            delete zForce;
+            delete uForce;
+            delete vForce;
+            delete wForce;
+*/
+
+        }
+    }
+
+    bool allocated = false;
+
     Map2d<lpReal_t> *xForce;
     Map2d<lpReal_t> *yForce;
     Map2d<lpReal_t> *zForce;
@@ -68,6 +86,7 @@ public:
         extForce->uForce = createForce(configTable, "externalForce.uForce");
         extForce->vForce = createForce(configTable, "externalForce.vForce");
         extForce->wForce = createForce(configTable, "externalForce.wForce");
+        extForce->allocated = true;
         return extForce;
     }
 
@@ -116,6 +135,7 @@ public:
             return ptr;
         }
         // force not found throw exception
+        return nullptr;
     }
 
 };

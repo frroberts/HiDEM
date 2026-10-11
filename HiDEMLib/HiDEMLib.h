@@ -22,12 +22,17 @@
 #include <LinkDataHandler.h>
 
 #include <Geometry/Bed.h>
+#include <Transport/LinkTransporter.h>
 
 #include "DomainBuilder.h"
 #include "HiDEMDistribution.h"
 #include "HiDEMGeometry.h"
 #include "LoggerV2/RangeCollection.h"
 #include "Transport/ParticleTransporter.h"
+
+#include <DynamicVariables.h>
+
+#include "ThrustHelper.h"
 
 
 // no need to include these if they are not used
@@ -55,7 +60,7 @@ public:
 #endif
 
     ParallelReduce<double> distReducer;
-    HiDEMDistribution *distr;
+    HiDEMDistribution<PDataT,LDataT> *distr;
 
     ParallelReduce<lpReal_t> reducer;
 
@@ -90,6 +95,8 @@ public:
 
     bool fromRestart = false;
 
+    bool linkRegenEnabled = false;
+
     int initBalancePoints;
     double initBalanceTolerance;
 
@@ -101,6 +108,10 @@ public:
     std::optional<std::string> outMeshFile;
     std::optional<std::string> outMeshType;
 
+    bool HDF5Compression;
+    int HDF5CompressionLevel;
+    bool HDF5AsyncIO;
+
     std::optional<ExternalForces *> extForce;
 
     int currentTimestep = 0;
@@ -108,6 +119,26 @@ public:
     int startTimestep = 0;
     int outputInterval;
     int iterationBlockSize = 10;
+
+    DynamicVariable<int> *timeStep;
+
+    ~HiDEMLib() {
+
+        delete accel;
+        delete distr;
+        //delete lDataPtr;
+        //delete pDataPtr;
+
+        /*
+
+        delete lMapperPtr;
+        delete pMapperPtr;
+        */
+
+        if (extForce) {
+            delete extForce.value();
+        }
+    }
 
     // -----------------------------
     // get functions
@@ -160,11 +191,12 @@ public:
 
         T *outPtr = out.data();
 
-        pDataPtr->iterateOwnedParticles(OffloadExec(), [=] DEVCALLABLE(pInd_t pInd, CombinedAccel &accel, LinkData &lData) {
+        pDataPtr->iterateAllParticles(OffloadExec(), [=] DEVCALLABLE(pInd_t pInd, CombinedAccel &accel, LinkData &lData) {
             int activeLinks = 0;
 
             accel.lAccel.iterateParticleLinksCT([&](lInd_t lInd, lInd_t sideInd, pInd_t pIndOther) {
-                if (lData.state[lInd]) {
+                if (lData.state[lInd])
+                {
                     activeLinks++;
                 }
             }, pInd);
@@ -180,7 +212,7 @@ public:
 
         T *outPtr = out.data();
 
-        pDataPtr->iterateOwnedParticles(OffloadExec(), [=] DEVCALLABLE(pInd_t pInd, CombinedAccel &accel) {
+        pDataPtr->iterateAllParticles(OffloadExec(), [=] DEVCALLABLE(pInd_t pInd, CombinedAccel &accel) {
             int iteratedNeighs = 0;
 
             accel.nList.iteratePossibleNeighbours([&](pInd_t nInd) {
@@ -191,13 +223,11 @@ public:
         Iterator::syncAll();
     }
 
-
     // -----------------------------
     // timestep functions
     bool run(){
         return currentTimestep < endTimestep;
     }
-
 
     bool runOutput(){
         if(outputInterval > 0)
@@ -207,6 +237,10 @@ public:
 
     int getCurrentTimestep() {
         return currentTimestep;
+    }
+
+    DynamicVariable<int> &getTimeStep() {
+        return *timeStep;
     }
 
     template<class LinkFun, class ... NeighArgs, class ... LinkSideArgs, class ... LinkArgs>
@@ -221,14 +255,51 @@ public:
         Iterator::syncAll();
     }
 
-    template<class ForceFun>
-    void applyForce(ForceFun applyForce) {
+    template<class LinkFun, class... NeighArgs, class... LinkSideArgs, class... LinkArgs>
+    void linkUpdateRegen(LinkFun breakLinks,
+                         std::tuple<NeighArgs...> neighArgs, std::tuple<LinkSideArgs...> linkSideArgs,
+                         std::tuple<LinkArgs...> linkArgs) {
+        auto range = xvtxRangeStart("link");
+        RangeV2 r("link update regen", 3);
+        {
+            RangeV2 r("link update", 3);
+            auto fullArgs = make3Pack(neighArgs, linkSideArgs, linkArgs);
+
+            accel->iterateLinksRegen(execType, *pDataPtr, *lDataPtr, breakLinks, fullArgs);
+            Iterator::syncAll();
+        } {
+            RangeV2 r("link comm", 3);
+
+            Iterator::syncAll();
+            MPI_Barrier(MPI_COMM_WORLD);
+
+            if (distr->linkStateComm.incommingIndexes.size() > 0) {
+                distr->linkStateComm.postRecvs();
+                distr->linkStateComm.packAllCommData(packVecPtrs(lDataPtr->state));
+                distr->linkStateComm.postSends();
+                distr->linkStateComm.syncRecvs();
+                // unpack by hand here, and if the state changes from broken to intact recreate the link on the remote
+
+                lDataPtr->updateStateInd(distr->linkStateComm.incommingIndexes, distr->linkStateComm.incommingBuffers);
+
+                distr->linkStateComm.syncSends();
+            }
+        }
+        xvtxRangeEnd(range);
+    }
+
+
+    template<class ForceFun, class ... Args>
+    void applyForce(ForceFun applyForce, Args ... args) {
+    auto range = xvtxRangeStart("apply force");
+
         RangeV2 r("particle apply force", 2);
 
         // iterate particles and apply force
-        pDataPtr->iterateAllParticles(execType, applyForce, *pDataPtr);
+        pDataPtr->iterateAllParticles(execType, applyForce, *pDataPtr, args...);
 
         Iterator::syncAll();
+        xvtxRangeEnd(range);
     }
 
     template<class NFunc, class LFunc, class ... NeighArgs, class ... LinkArgs, class ... LinkSideArgs, class ... ForceArgs>
@@ -249,12 +320,10 @@ public:
             RangeV2 r("force neigh/linked pre", 3);
             accel->iterateCombinedPre(execType, *pDataPtr, *lDataPtr, neighbourForceFunc, linkForceFunc, fullArgs);
             xvtxRangeEnd(range);
-
         }
 
         {
             RangeV2 r("particle communication gather", 3);
-
             // distr->gatherHaloParticles(execType, *pDataPtr);
             distr->pForceComm.packAllCommData(packVecPtrs(
                     pDataPtr->xForce, pDataPtr->yForce, pDataPtr->zForce, pDataPtr->uForce, pDataPtr->vForce,pDataPtr->wForce));
@@ -264,10 +333,8 @@ public:
         {
             RangeV2 r("force neigh/linked post", 3);
             auto rangePost = xvtxRangeStart("force neigh/linked post");
-
             accel->iterateCombinedPost(execType, *pDataPtr, *lDataPtr, neighbourForceFunc, linkForceFunc, fullArgs);
             xvtxRangeEnd(rangePost);
-
         }
 
         {
@@ -276,10 +343,7 @@ public:
             RangeV2 r("post sends", 3);
             distr->pForceComm.postSends();
             xvtxRangeEnd(rangePost);
-
         }
-
-
 
         {
             auto rangePost = xvtxRangeStart("particle comm wait recv");
@@ -287,9 +351,7 @@ public:
             RangeV2 r("particle comm wait recv", 3);
             distr->pForceComm.syncRecvs();
             xvtxRangeEnd(rangePost);
-
         }
-
 
         {
             RangeV2 r("particle communication scatter", 3);
@@ -360,12 +422,30 @@ public:
         auto *yDiffPtr = pDataPtr->yDiff.data();
         auto *zDiffPtr = pDataPtr->zDiff.data();
 
-        xMax = reducer.maxDerived(pDataPtr->ownedIndexes.size(), [=] DEVCALLABLE (int i){int index = owndedPtr[i];
-            return xDiffPtr[index]; });
-        yMax = reducer.maxDerived(pDataPtr->ownedIndexes.size(), [=] DEVCALLABLE (int i){int index = owndedPtr[i];
-            return yDiffPtr[index]; });
-        zMax = reducer.maxDerived(pDataPtr->ownedIndexes.size(), [=] DEVCALLABLE (int i){int index = owndedPtr[i];
-            return zDiffPtr[index]; });
+        xMax = ParStd::transform_reduce(EXECPOLICY pDataPtr->ownedIndexes.begin(), pDataPtr->ownedIndexes.end(), 0.0,
+                                        []DEVCALLABLE (hpReal_t a, hpReal_t b) {
+                                            if (a > b)
+                                                return a;
+                                            return b;
+                                        }, [=] DEVCALLABLE (int index) {
+                                            return xDiffPtr[index];
+                                        });
+        yMax = ParStd::transform_reduce(EXECPOLICY pDataPtr->ownedIndexes.begin(), pDataPtr->ownedIndexes.end(), 0.0,
+                                        []DEVCALLABLE (hpReal_t a, hpReal_t b) {
+                                            if (a > b)
+                                                return a;
+                                            return b;
+                                        }, [=] DEVCALLABLE (int index) {
+                                            return yDiffPtr[index];
+                                        });
+        zMax = ParStd::transform_reduce(EXECPOLICY pDataPtr->ownedIndexes.begin(), pDataPtr->ownedIndexes.end(), 0.0,
+                                        []DEVCALLABLE (hpReal_t a, hpReal_t b) {
+                                            if (a > b)
+                                                return a;
+                                            return b;
+                                        }, [=] DEVCALLABLE (int index) {
+                                            return zDiffPtr[index];
+                                        });
 
         return std::make_tuple(xMax, yMax, zMax);
     }
@@ -416,6 +496,7 @@ public:
             MPI_Barrier(MPI_COMM_WORLD);
         }
         currentTimestep++;
+        timeStep->increment();
 
         if ((currentTimestep % 5000 == 0 && currentTimestep != 0) || currentTimestep == 100 || currentTimestep == 200 || currentTimestep == 1000 || currentTimestep == 2000) {
             Logger::writeAtFirst("timestep done " + std::to_string(currentTimestep) + "\n");
@@ -443,7 +524,7 @@ public:
 
         if (currentTimestep % checkpointInterval == 0 && checkpointInterval != -1 && currentTimestep != 0) {
             RangeV2 r("checkpoint IO", 2);
-            checkpoint.writeCheckpoint(currentTimestep, distr->bounding, *pDataPtr, *lDataPtr, timestepCheckpoint,
+            checkpoint.writeCheckpoint(currentTimestep, distr->world.getOwnDomain(), *pDataPtr, *lDataPtr, timestepCheckpoint,
                                        outWorkingPath.value_or(""),
                                        checkpointDirectory);
         }
@@ -478,27 +559,45 @@ public:
             Logger::writeAtFirst("redistribute ts: " + std::to_string(currentTimestep) + " \n");
             // Logger::writeAtFirst(fmt::format("redistribute ts: {} \n", ts));
             MPI_Barrier(MPI_COMM_WORLD);
+            distr->syncCT(*lDataPtr, *lMapperPtr);
+
             distr->reDistribute(*pDataPtr, *lDataPtr, *pMapperPtr, *lMapperPtr, searchDistance * haloScale,
-                                reBalanceTolerance,
-                                true);
+                                reBalanceTolerance);
             MPI_Barrier(MPI_COMM_WORLD);
             needsGridRegen = true;
+            // needed to not fail the link regen
+
+            accel->generateLinks(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+            accel->lAccel.sortSideData(*pDataPtr, *lDataPtr);
         }
 
         if (needsGridRegen) {
-            RangeV2 r("grid generate", 2);
-
             Logger::writeAtFirst(
                 "grid regen ts: " + std::to_string(currentTimestep) + " distance: " + std::to_string(accumulatedDist) +
-                " limit: " + std::to_string((searchDistance - interactDist) / 2.0) + " \n");
-            // Logger::writeAtFirst(fmt::format("grid regen ts: {} distance: {} limit: {} \n", ts, accumulatedDist, (searchDistance - maxParticleDist) / 2.0));
+                " limit: " + std::to_string((searchDistance - interactDist) / 2.0) + " \n", true);
+
+            RangeV2 r("grid generate", 2);
+
             accumulatedDist = 0;
+
             // regenerate neighbour list
+
             accel->generatePrePostCommIndexes(*pDataPtr, *lDataPtr, distr->pForceComm);
+            accel->generateNeighbours(*pDataPtr, *lDataPtr, searchDistance, interactDist);
 
-            accel->generate(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+            if(linkRegenEnabled) {
+                // regenerate all possible links
+                regenerateAllLinks();
+                Logger::writeAtFirst("links regenerated \n", true);
+            }
+
+            accel->generateLinks(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+            accel->lAccel.sortSideData(*pDataPtr, *lDataPtr);
+            accel->generateIndexes(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+
+            Logger::writeAtFirst("Grid regen out \n", true);
+
         }
-
     }
 
 
@@ -519,12 +618,12 @@ public:
                             std::string prefix = "") {
         ManVec<pInd_t> indexes = filterIndexVec(pDataPtr->ownedIndexes, filter, *pDataPtr);
 
-        snapshotParticlesIndex(fieldNames, outFields, pDataPtr->ownedIndexes);
+        snapshotParticlesIndex(fieldNames, outFields, indexes);
     }
 
 
     template<class... Names, class... Fields>
-    void snapshotParticlesIndex(std::tuple<Names...> &fieldNames, std::tuple<Fields...> &outFields,
+    void snapshotParticlesIndex(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields,
                                 ManVec<pInd_t> &indexes, std::string prefix = "") {
         // add compile time check that both tuples are the same size ?
         RangeV2 r("write particles", 2);
@@ -542,7 +641,7 @@ public:
                                               vecPtrToDataPtr(outFields));
                 partIo.closeFile();
             } else if (outParticleType.value() == "HDF5") {
-                Hdf5Writer partIo;
+                Hdf5Writer partIo(HDF5Compression, HDF5CompressionLevel);
                 partIo.createFile(outputStr + ".h5");
                 partIo.writerParticlesIndexed(pDataPtr->xCord, pDataPtr->yCord, pDataPtr->zCord, indexes, fieldNames,
                                               vecPtrToDataPtr(outFields));
@@ -554,7 +653,7 @@ public:
                                               vecPtrToDataPtr(outFields));
                 partIo.closeFile();
             } else if (outParticleType.value() == "VTKHDF") {
-                VtkHdfWriter partIo;
+                VtkHdfWriter partIo(HDF5Compression, HDF5CompressionLevel);
                 partIo.createFile(outputStr + ".vtkhdf");
                 partIo.writerParticlesIndexed(pDataPtr->xCord, pDataPtr->yCord, pDataPtr->zCord, indexes, fieldNames,
                                               vecPtrToDataPtr(outFields));
@@ -600,7 +699,7 @@ public:
             } else if (outLinkType.value() == "HDF5") {
                 std::string outputStr =
                         outWorkingPath.value_or(".") + "/" + prefix + outLinkFile.value() + std::to_string(currentTimestep);
-                Hdf5Writer linkIo;
+                Hdf5Writer linkIo(HDF5Compression, HDF5CompressionLevel);
                 linkIo.createFile(outputStr + ".h5");
                 linkIo.writeIndexed(indexes, lDataPtr->numLocal, fieldNames, vecPtrToDataPtr(outFields));
                 linkIo.closeFile();
@@ -612,16 +711,14 @@ public:
     }
 
     template<class... Names, class... Fields>
-    void
-    snapshotMesh(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields, std::string prefix = "") {
+    void snapshotMesh(std::tuple<Names...> fieldNames, std::tuple<Fields...> outFields, std::string prefix = "") {
         getCollisionMeshPtr()->reduceForces();
         // add compile time check that both tuples are the same size ?
         if (outMeshType && outMeshFile && !outMeshFile.value().empty()) {
             // no these cant do inheritance they rely on templates
             if (outMeshType.value() == "VTKHDF") {
-                std::string outputStr =
-                        outWorkingPath.value_or(".") + "/" + prefix + outMeshFile.value() + std::to_string(currentTimestep);
-
+                std::string outputStr = outWorkingPath.value_or(".") + "/" + prefix + outMeshFile.value() + std::to_string(currentTimestep);
+                
                 VtkHdfWriter meshIo;
                 meshIo.createFile(outputStr + ".vtkhdf");
                 meshIo.writeMeshFullSingle(
@@ -640,6 +737,9 @@ public:
 
 
     void setup(ArgParser &parser, double scale) {
+
+        timeStep = new DynamicVariable<int>();
+        timeStep->set(0);
         //
         endTimestep = parser.getArg<int>("iteration.timeSteps").value_or(10000);
         outputInterval = parser.getArg<int>("iteration.outputInterval").value_or(0);
@@ -655,7 +755,7 @@ public:
         extForce = ExternalForceBuilder::build(parser.table);
 
         haloScale = parser.getArg<double>("distribution.haloScale").value_or(100.0);
-        reBalanceTolerance = parser.getArg<double>("distribution.reBalanceTolerance").value_or(0.001);
+        reBalanceTolerance = parser.getArg<double>("distribution.reBalanceTolerance").value_or(0.00001);
         reBalance = parser.getArg<bool>("distribution.reBalance").value_or(true);
 
         redistributionInterval = parser.getArg<int>("distribution.redistributionInterval").value_or(100);
@@ -666,8 +766,14 @@ public:
         checkpointInterval = parser.getArg<int>("restart.checkpointInterval").value_or(10000);
         checkpointDirectory = parser.getArg<std::string>("restart.checkpointDirectory").value_or("checkpoints");
 
+        HDF5Compression = parser.getArg<bool>("HDF5.compression").value_or(false);
+        HDF5CompressionLevel = parser.getArg<int>("HDF5.compressionLevel").value_or(4);
+        HDF5AsyncIO = parser.getArg<bool>("HDF5.async").value_or(true);
+
         searchDistanceScale = parser.getArg<double>("grid.searchDistanceScale").value_or(1.4);
         gridRegenInterval = parser.getArg<int>("grid.gridRegenInterval").value_or(-1);
+
+        linkRegenEnabled = parser.getArg<bool>("linkRegen.enabled").value_or(false);
 
         lpReal_t maxParticleDist = geometry.maxRadius * 2.0;
         searchDistance = searchDistanceScale * maxParticleDist;
@@ -687,7 +793,9 @@ public:
         }
 
 
-        distr = new HiDEMDistribution(reBalance, searchDistance);
+        distr = new HiDEMDistribution<PDataT,LDataT>(reBalance, searchDistance);
+        distr->lTrans->keepInactive = linkRegenEnabled;
+
         generateDomains(searchDistance * haloScale, *distr);
 
         buildData(*distr, searchDistance * haloScale, reBalanceTolerance);
@@ -714,14 +822,18 @@ public:
         outMeshType = parser.getArg<std::string>("output.outMeshType");
 
         // set up the accel
+        accel->lAccel.keepInactive = linkRegenEnabled;
         accel->generatePrePostCommIndexes(*pDataPtr, *lDataPtr, distr->pForceComm);
-        accel->generate(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+        accel->generateNeighbours(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+        accel->generateLinks(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+        accel->generateIndexes(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+
 
         Iterator::syncAll();
     }
 
 
-    void generateDomains(double haloSize, HiDEMDistribution &distr) {
+    void generateDomains(double haloSize, HiDEMDistribution<PDataT,LDataT> &distr) {
         if (fromRestart) {
             // set up distr from file
             distr.world.domains = checkpoint.readDomains();
@@ -744,18 +856,28 @@ public:
     }
 
     std::tuple<PDataT *, LDataT *>
-    buildData(HiDEMDistribution &distr, double haloSize, double reBalanceTolerance) {
+    buildData(HiDEMDistribution<PDataT,LDataT> &distr, double haloSize, double reBalanceTolerance) {
 
         pDataPtr = new ParticleDataHandler<PDataT>();
         lDataPtr = new LinkDataHandler<LDataT>();
-        // these will leak
+        // todo fix betteer at some point
+        lDataPtr->keepInactive = linkRegenEnabled;
         GlobalLocalMapper<gKey_t, pInd_t> *pMapperPtr = new GlobalLocalMapper<gKey_t, pInd_t>();
         auto &pMapper = *pMapperPtr;
+        auto *pTrans = new ParticleTrasporterV2<PDataT>();
 
         if (fromRestart) {
             checkpoint.readParticleDataTup(*pDataPtr);
             pDataPtr->remap(pMapper);
+            Logger::writeAtFirst("Particles loaded: " + Logger::getStats(pDataPtr->numLocal, "particles") + "\n");
+
+            pTrans->getOutgoingHalo(distr.world, *pDataPtr);
+            pTrans->getIncomming(*pDataPtr);
+            pDataPtr->remap(pMapper);
+
             checkpoint.readLinkData(*lDataPtr);
+            Logger::writeAtFirst("Links loaded: " + Logger::getStats(lDataPtr->numLocal, "links") + "\n");
+
         } else {
             // find your actual domain
             Domain ownDomain = distr.world.getOwnDomain();
@@ -771,19 +893,15 @@ public:
 #endif
             pDataPtr->appendInitParticles(particles);
 
-            ManVec<ElementaryLink> links;
-
-            auto *pTrans = new ParticleTrasporterV2<PDataT>();
-
 
             pTrans->getOutgoingHalo(distr.world, *pDataPtr);
             pTrans->getIncomming(*pDataPtr);
 
             pDataPtr->remap(pMapper);
-            // move to geometry
+
+            ManVec<ElementaryLink> links;
             links = geometry.generateLinks(pDataPtr);
             Logger::writeAtFirst("Links generated: " + Logger::getStats(links.size(), "links") + "\n");
-            delete pTrans;
 
 #ifndef SET_LOCAL_ID_64
             if (links.size() > 2000000000) {
@@ -793,26 +911,9 @@ public:
             }
 #endif
 
-            // todo maybe parallelize this
-            // todo needs to be done for restarted as well
-            std::unordered_map<gKey_t, int> linksPerPart;
-            for (const auto &l: links) {
-                if (linksPerPart.find(l.globalKeyParticleA) == linksPerPart.end()) {
-                    linksPerPart[l.globalKeyParticleA] = 0;
-                }
-                if (linksPerPart.find(l.globalKeyParticleB) == linksPerPart.end()) {
-                    linksPerPart[l.globalKeyParticleB] = 0;
-                }
-                linksPerPart[l.globalKeyParticleA]++;
-                linksPerPart[l.globalKeyParticleB]++;
-            }
-            auto maxLinksPerPart = *std::max_element(linksPerPart.begin(), linksPerPart.end(),
-                                                     [](auto a, auto b) { return a.second < b.second; });
-            lDataPtr->allocatedMaxLinks = maxLinksPerPart.second;
             lDataPtr->appendInitLinks(links);
         }
-
-        lDataPtr->makeLocalPartEnds(pMapper, true);
+        lDataPtr->makeLocalPartEnds(pMapper);
 
         auto *lMapperPtr = new GlobalLocalMapper<gKey_t, pInd_t>();
         auto &lMapper = *lMapperPtr;
@@ -820,15 +921,54 @@ public:
         lDataPtr->remap(lMapper);
 
         // dont sync CT as the neighbours at this stage dont have any
-        distr.reDistribute(*pDataPtr, *lDataPtr, pMapper, lMapper, haloSize, reBalanceTolerance, false);
+        distr.reDistribute(*pDataPtr, *lDataPtr, pMapper, lMapper, haloSize, reBalanceTolerance);
 
         delete pMapperPtr;
         delete lMapperPtr;
 
+        delete pTrans;
+
         return std::tuple<PDataT *, LDataT *>(pDataPtr, lDataPtr);
     }
 
+    void regenerateAllLinks(){
+        RangeV2 r("refreeze", 3);
+        {
+            distr->syncCT(*lDataPtr, *lMapperPtr);
 
+            RangeV2 r("drop broken non owned links", 3);
+            lDataPtr->dropBrokenNonOwnedLinks();
+        } {
+            RangeV2 r("append links", 3);
+            accel->generateLinks(*pDataPtr, *lDataPtr, searchDistance, interactDist);
+
+            auto newLinks = geometry.lGen->regenerateLinks(pDataPtr, lDataPtr, accel);
+
+            // add new links
+            int oldCount = lDataPtr->numLocal;
+            lDataPtr->appendInitLinks(newLinks);
+            // todo fix the partial local end making
+            lDataPtr->makeLocalPartEnds(*pMapperPtr, 0);
+
+            generateOwnedNonOwned(lDataPtr->owners, lDataPtr->ownedIndexes, lDataPtr->nonOwnedIndexes, lDataPtr->numLocal);
+        }
+        {
+            RangeV2 r("Make communicator", 3);
+
+            distr->lTrans->getOutgoingHalo(distr->world, *pDataPtr, *lDataPtr);
+            distr->lTrans->getIncomming(*lDataPtr);
+
+            lDataPtr->remap(*lMapperPtr);
+            // todo make an option to connect a subset only
+            lDataPtr->connectParticleLinks(*pMapperPtr);
+            distr->lCTComm.initFromTransporter(*distr->lTrans);
+
+            distr->linkStateComm.initFromTransporter(*distr->lTrans);
+            distr->linkStateComm.tagStart = 128;
+            distr->linkStateComm.setupBuffers();
+            distr->linkStateComm.makeLocalIndexes(*lMapperPtr);
+        }
+    }
 };
 
 

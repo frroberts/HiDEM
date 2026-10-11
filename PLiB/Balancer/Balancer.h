@@ -18,14 +18,16 @@
 #include <ParallelReduce.h>
 
 class Balancer {
+public:
 
     enum SplitDim
     {
         X, Y, Z
     };
 
-    Domain getMidpoint(Domain bounding, SplitDim splitDir, Real3 prevSize, double target, double current,
-                       int iter = 0);
+    Domain getMidpoint(int *indexPtr, int indexCount, Domain bounding, SplitDim splitDir, Real3 prevSize,
+        double target, double current, int iter = 0);
+
     std::string getIndent(int iter)
     {
         std::string indent;
@@ -35,7 +37,6 @@ class Balancer {
         return indent;
     }
 
-public:
     int maxDepth = 32;
     double tolerance = 0.005;
     bool verbose = false;
@@ -46,8 +47,6 @@ public:
     int numParticles;
     std::vector<Domain> domains;
     MPI_Comm comm = MPI_COMM_WORLD;
-
-    ParallelReduce<int> reducer;
 
     bool xActive = true;
     bool yActive = true;
@@ -61,11 +60,11 @@ public:
 
     void setComm(MPI_Comm newComm);
     void setBuffers(ManVec<double> &xCords, ManVec<double> &yCords, ManVec<double> &zCords, ManVec<double> &weights);
-    void split(Domain parent, int numDomains);
+    void split(Domain parent, int numDomains, int *indexPtr, int indexCount);
     std::vector<Domain> balance(int numDomains, double halo, Domain bounding);
-    int64_t getDomainLoad(Domain &dom, int numParticles) ;
+    double getDomainLoad(Domain &dom, int *indexPtr, int indexCount) ;
 
-    int64_t getDomainLocalLoad(const Domain &dom, int numParticles);
+    double getDomainLocalLoad(Domain &dom, int *indexPtr, int indexCount);
 };
 
 

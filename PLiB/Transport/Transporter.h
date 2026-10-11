@@ -17,88 +17,138 @@
 #include "Util/MPIHelpers.h"
 #include "LoggerV2/RangeCollection.h"
 
+class TransportTargetV2 {
+public:
+    int targetRank;
+    int count;
+    int* indexesPtr;
+    gKey_t* globalKeysPtr;
+    int offset;
+
+#if defined(GPU) && !defined(ENABLE_GDR)
+    gKey_t* globalKeysPtr_host;
+
+    // ManVec<gKey_t, PinnedAllocator<gKey_t>> globalKeys_host;
+#endif
+
+};
+
+
 class TransporterV2 : public ManagedParent {
 
 protected:
+
+
+
+    ManVec<int> indexesOut;
+    ManVec<int> indexesIn;
+    ManVec<gKey_t> globalKeysOut;
+    ManVec<gKey_t> globalKeysIn;
+#if defined(GPU) && !defined(ENABLE_GDR)
+    ManVec<gKey_t, PinnedAllocator<gKey_t>> globalKeysOut_host;
+    ManVec<gKey_t, PinnedAllocator<gKey_t>> globalKeysIn_host;
+#endif
+
 public:
-    struct TransportTargetV2 {
-        int targetRank;
-        int count;
-        int recvOffset;
-        ManVec<int> indexes;
-        ManVec<gKey_t> globalKeys;
-    };
 
     int tag = 0;
-    ManVec<TransportTargetV2> outTargets;
-    ManVec<TransportTargetV2> inTargets;
-    int
-    syncTargets() {
+    std::vector<TransportTargetV2> outTargets;
+    std::vector<TransportTargetV2> inTargets;
 
+    int syncTargets() {
         int worldSize;
         MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
         int self = 0;
         MPI_Comm_rank(MPI_COMM_WORLD, &self);
 
-        int *outgoingNum = new int[worldSize];
-        int *outgoingCount = new int[worldSize];
-        int *incomingNum = new int[worldSize];
-        int *incomingCount = new int[worldSize];
+        std::vector<int> numIncoming;
+        std::vector<int> numOutgoing;
+
+        numIncoming.resize(worldSize);
+        numOutgoing.resize(worldSize);
         for (int i = 0; i < worldSize; ++i) {
-            outgoingNum[i] = 0;
-            outgoingCount[i] = 0;
+            numIncoming[i] = 0;
+            numOutgoing[i] = 0;
         }
 
-        MPI_Request* gKeyRequests = new MPI_Request [outTargets.size()];
         for (int t = 0; t < outTargets.size(); ++t) {
-            //
-            MPI_Isend(outTargets[t].globalKeys.data(),
-                      outTargets[t].globalKeys.size(),
-                      MPI_LONG_LONG_INT, outTargets[t].targetRank, tag, MPI_COMM_WORLD, &gKeyRequests[t]);
-            // communicate the rest
-            outgoingNum[outTargets[t].targetRank] = 1;
-            outgoingCount[outTargets[t].targetRank] = outTargets[t].globalKeys.size();
+            numOutgoing[outTargets[t].targetRank] = outTargets[t].count;
         }
 
-        MPI_Allreduce(outgoingNum, incomingNum, worldSize, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Allreduce(outgoingCount, incomingCount, worldSize, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Alltoall(numOutgoing.data(), 1, MPI_INT, numIncoming.data(), 1,
+            MPI_INT, MPI_COMM_WORLD);
+        MPI_Request *gKeyRequests = new MPI_Request [outTargets.size()];
 
-        inTargets.resize(incomingNum[self]);
+        inTargets.clear();
 
         int offset = 0;
-        for(auto &t: inTargets) {
-            new(&t) TransportTargetV2{};
+        for (int t = 0; t < numIncoming.size(); ++t) {
+            if (numIncoming[t] > 0) {
+                inTargets.push_back(TransportTargetV2());
 
-            //
-            MPI_Status status;
-            MPI_Probe(MPI_ANY_SOURCE, tag, MPI_COMM_WORLD, &status);
-            int incommingCount;
-            MPI_Get_count(&status, MPI_LONG_LONG_INT, &incommingCount);
+                int incomingCount = numIncoming[t];
+                inTargets.back().offset = offset;
 
-            t.targetRank = status.MPI_SOURCE;
-            t.globalKeys.resize(incommingCount);
-
-            t.count = incommingCount;
-
-            t.recvOffset = offset;
-            offset+=incommingCount;
-
-            MPI_Recv(t.globalKeys.data(), incommingCount, MPI_LONG_LONG_INT,
-                     status.MPI_SOURCE, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                inTargets.back().targetRank =  t;
+                inTargets.back().count = incomingCount;
+                offset+=incomingCount;
+            }
         }
-        MPI_Waitall(outTargets.size(), gKeyRequests, MPI_STATUSES_IGNORE);
+
+        indexesIn.resize(offset);
+        globalKeysIn.resize(offset);
+
+        for (auto &t: inTargets) {
+            t.globalKeysPtr = globalKeysIn.data() + t.offset;
+            t.indexesPtr = indexesIn.data() + t.offset;
+        }
+
+#if defined(GPU) && !defined(ENABLE_GDR)
+        globalKeysIn_host.resize(globalKeysIn.size());
+        globalKeysOut_host.resize(globalKeysOut.size());
+#endif
+
+        int i = 0;
+        for (auto &t: outTargets) {
+#if defined(GPU) && !defined(ENABLE_GDR)
+            t.globalKeysPtr_host = globalKeysOut_host.data() + t.offset;
+            getErrorDevApi(devMemcpy(t.globalKeysPtr_host, t.globalKeysPtr,
+                sizeof(gKey_t)*t.count, devMemcpyDefault));
+            Iterator::syncAll();
+            MPI_Isend(t.globalKeysPtr_host, t.count,
+                      MPI_LONG_LONG_INT, t.targetRank, tag, MPI_COMM_WORLD, &gKeyRequests[i]);
+#else
+            MPI_Isend(t.globalKeysPtr, t.count,
+                      MPI_LONG_LONG_INT, t.targetRank, tag, MPI_COMM_WORLD, &gKeyRequests[i]);
+#endif
+            i++;
+        }
+
+        for(auto &t: inTargets) {
+#if defined(GPU) && !defined(ENABLE_GDR)
+            t.globalKeysPtr_host = globalKeysIn_host.data() + t.offset;
+            MPI_Recv(t.globalKeysPtr_host, t.count, MPI_LONG_LONG_INT, t.targetRank, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            getErrorDevApi(devMemcpy(t.globalKeysPtr, t.globalKeysPtr_host, sizeof(gKey_t)*t.count, devMemcpyDefault));
+#else
+                MPI_Recv(t.globalKeysPtr, t.count, MPI_LONG_LONG_INT,t.targetRank, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+#endif
+        }
+        for (int t = 0; t < outTargets.size(); ++t) {
+            //
+
+            if (outTargets[t].count > 0) {
+                MPI_Wait(&gKeyRequests[t], MPI_STATUSES_IGNORE);
+            }
+        }
         MPI_Barrier(MPI_COMM_WORLD);
 
-        int ret = incomingCount[self];
-        delete[] outgoingNum;
-        delete[] outgoingCount;
-        delete[] incomingNum;
-        delete[] incomingCount;
+        int ret = offset;
+
+        delete[] gKeyRequests;
 
         return ret;
     }
-
-
 
     void clear() {
         inTargets.clear();
@@ -106,91 +156,98 @@ public:
     }
 
     template<typename FieldT>
-    void
-    transmitFileds(int recvStartOffset, std::vector<MPI_Request> &requests, std::vector<MPI_Datatype> &gatherTypes, FieldT fieldTuple,
-                   int tagStart,
-                   ManVec<TransportTargetV2> &targetsOut,
-                   ManVec<TransportTargetV2> &targetsIn) {
-        RangeV2 r6("transmit field", 3);
-
-        for (int t = 0; t < targetsOut.size(); ++t) {
-            //
-            int tagOFfset = tagStart;
-            callForTupleElem(fieldTuple, [&]<typename T>(ManVec<T> *ptr) {
-                // todo reconsider these types and do manual gather instead ?
-                gatherTypes.push_back(MPI_Datatype());
-                requests.push_back(MPI_Request());
-
-                MPI_Type_create_indexed_block(targetsOut[t].indexes.size(), 1, targetsOut[t].indexes.data(), getMPIType<T>(),
-                                              &gatherTypes.back());
-                MPI_Type_commit(&gatherTypes.back());
-
-                MPI_Isend(ptr->data(), 1, gatherTypes.back(), targetsOut[t].targetRank, tag + tagOFfset,
-                          MPI_COMM_WORLD, &requests.back());
-
-                tagOFfset++;
-            });
-        }
-        for(auto &t: targetsIn) {
-
-            int tagOFfset = tagStart;
-            callForTupleElem(fieldTuple, [&]<typename T>(ManVec<T> *ptr) {
-                MPI_Recv(&(ptr->data()[recvStartOffset + t.recvOffset]), t.count, getMPIType<T>(), t.targetRank, tag + tagOFfset,
-                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                tagOFfset++;
-            });
-        }
-    }
-
-    template<typename FieldT>
-    void
-    transmitFiledsFull(int recvStartOffset, FieldT fieldTuple,
-                   ManVec<TransportTargetV2> &targetsOut,
-                   ManVec<TransportTargetV2> &targetsIn) {
+    void transmitFiledsFull(int recvStartOffset, FieldT fieldTuple,
+                            std::vector<TransportTargetV2> &targetsOut,
+                            std::vector<TransportTargetV2> &targetsIn) {
         RangeV2 r6("tranmit field", 3);
 
         std::vector<MPI_Request> requests;
-        std::vector<MPI_Datatype> gatherTypes;
         requests.reserve(targetsOut.size() * std::tuple_size<decltype(fieldTuple)>::value);
-        gatherTypes.reserve(targetsOut.size() * std::tuple_size<decltype(fieldTuple)>::value);
 
         int tagStart = 1;
 
-        for(auto &t: targetsIn) {
+        auto inPtrs = vecPtrToDataPtr(fieldTuple);
+        int bufferSize = 0;
+
+        for (auto &t: targetsIn) {
+            bufferSize += t.count;
+        }
+
+
+        callForTupleElemRef(inPtrs, [&]<typename T>(T *&ptr) {
+            ptr = new T[bufferSize];
+        });
+
+        for (auto &t: targetsIn) {
+
+            // vecPtrToDataPtr
+            if (t.count == 0)
+                continue;
             requests.push_back(MPI_Request());
 
             int tagOFfset = tagStart;
-            callForTupleElem(fieldTuple, [&]<typename T>(ManVec<T> *ptr) {
-                MPI_Irecv(&(ptr->data()[recvStartOffset + t.recvOffset]), t.count, getMPIType<T>(), t.targetRank, tag + tagOFfset,
-                         MPI_COMM_WORLD, &requests.back());
+            callForTupleElem(inPtrs, [&]<typename T>(T *ptr) {
+                MPI_Irecv(&(ptr[t.offset]), t.count, getMPIType<T>(), t.targetRank, tag + tagOFfset,
+                          MPI_COMM_WORLD, &requests.back());
                 tagOFfset++;
             });
         }
 
         for (int t = 0; t < targetsOut.size(); ++t) {
+            if (outTargets[t].count == 0)
+                continue;
+
             //
             int tagOFfset = tagStart;
             callForTupleElem(fieldTuple, [&]<typename T>(ManVec<T> *ptr) {
-                // todo reconsider these types and do manual gather instead ?
-                ManVec<T> buff;
+#if defined(GPU) // && !defined(ENABLE_GDR) // remove this when cray mpich no longer leaks memory
+                ManVec<T, PinnedAllocator<T>> hostBuff;
+                ManVec<T, ScratchAllocator<T>> devBuff;
 
-                buff.resize(targetsOut[t].indexes.size(), false);
+                hostBuff.resize(targetsOut[t].count);
+                devBuff.resize(targetsOut[t].count);
 
-                Iterator::gather(OffloadExec(), buff.data(), ptr->data(), targetsOut[t].indexes.data(), targetsOut[t].indexes.size());
+                Iterator::gather(OffloadExec(), devBuff.data(), ptr->data(), targetsOut[t].indexesPtr, targetsOut[t].count);
 
                 Iterator::syncAll();
 
-                MPI_Send(buff.data(), targetsOut[t].indexes.size(), getMPIType<T>(), targetsOut[t].targetRank, tag + tagOFfset,
-                          MPI_COMM_WORLD);
+                getErrorDevApi(devMemcpy(hostBuff.data(), devBuff.data(), hostBuff.size()*sizeof(T), devMemcpyDefault));
 
+                Iterator::syncAll();
+
+                MPI_Send(hostBuff.data(), targetsOut[t].count, getMPIType<T>(), targetsOut[t].targetRank, tag + tagOFfset,
+                         MPI_COMM_WORLD);
+
+#else
+                ManVec<T, PinnedAllocator<T>> hostBuff;
+                hostBuff.resize(targetsOut[t].count);
+                Iterator::gather(OffloadExec(), hostBuff.data(), ptr->data(), targetsOut[t].indexesPtr, targetsOut[t].count);
+
+                Iterator::syncAll();
+
+                MPI_Send(hostBuff.data(), targetsOut[t].count, getMPIType<T>(), targetsOut[t].targetRank, tag + tagOFfset,
+                         MPI_COMM_WORLD);
+
+#endif
                 tagOFfset++;
             });
         }
 
+
         MPI_Waitall(requests.size(), requests.data(), MPI_STATUSES_IGNORE);
-        for (int i = 0; i < gatherTypes.size(); i++) {
-            MPI_Type_free(&gatherTypes[i]);
-        }
+
+        callForTuple2Elem(fieldTuple, inPtrs, [&]<typename T>(ManVec<T> *outPtr, T *buffPtr) {
+#if defined(GPU)
+            getErrorDevApi(devMemcpy(&(outPtr->data()[recvStartOffset]), buffPtr, bufferSize*sizeof(T), devMemcpyDefault));
+#else
+            std::memcpy(&(outPtr->data()[recvStartOffset]), buffPtr, bufferSize * sizeof(T));
+#endif
+
+        });
+
+        callForTupleElem(inPtrs, [&]<typename T>(T *&ptr) {
+            delete[] ptr;
+        });
 
     }
 

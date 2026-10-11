@@ -12,6 +12,10 @@ The next section covers, [Geometry functions](#geometry-functions) the functions
 
 The [External force](#external-force) section covers the different ways to apply external forces to the particles as part of the simulation.
 
+The [Random data](#random-data) section presents how to generated an array of random data that can be used by the code.
+
+How to access dynamic variables from some functions is presented in the [Dynamic variables](#dynamic-variables) section.
+
 Finally the last section, [Iterate over particles / links outside HiDEMLib](#iterate-over-particles--links-outside-hidemlib), covers the helper functions that exsist in case you want to build your own functions that iterate over the particles and / or links.
 
 # Arguments
@@ -56,7 +60,7 @@ The timestep of HiDEM is essentially 5 steps:
 - Compute forces between neighbouring particles
 - Compute forces between linked particles
 - Apply the forces computed to the particles and move them, as well as apply any external force, boundary conditions etc.
-- Update the links based on the new particle positions
+- Update the links based on the new particle positions, alternatively update and regenerate links
 
 From the codes standpoint the computation of forces from linked and neighboring particles are merged into one iteration over the particles.
 A basic in the code timestep looks as follows:
@@ -463,7 +467,9 @@ hiDem.computePartForce(neighbourForceFunc, linkForceFunc,
 
 Updating links works broadly in the same way as the neighbour and link force calculation, you feed in a bunch tuple of pointers and the function updating the links will be called with values extracted from those pointers for the current link.
 
-The function called every iteration to update the links looks as follows:
+For updating links there are two possible functions that can be used the normal `linkUpdate` function for just breaking links, and then `linkUpdateRegen` for being able to break and recrate links. The difference between them, is that in `linkUpdate` if the state is changed it is never intended to be changed back, i.e. once a link is broken it is permanently broken, whereas with `linkUpdateRegen` the state of the links can be changed back, so a link that gets set to zero can be reenabled. 
+
+The function called every iteration for the basic link update that only breaks links looks as follows as follows:
 
 ```c++
 template<class LinkFun, class ... NeighArgs, class ... LinkSideArgs, class ... LinkArgs>
@@ -471,7 +477,15 @@ void linkUpdate(LinkFun breakLinks,
                 std::tuple<NeighArgs...> neighArgs, std::tuple<LinkSideArgs...> linkSideArgs, std::tuple<LinkArgs...> linkArgs)
 ```
 
-It takes the function to apply to each link and the aguments to unpack. 
+The second alternative that can also regenerate links looks as follows. 
+
+```c++
+template<class LinkFun, class ... NeighArgs, class ... LinkSideArgs, class ... LinkArgs>
+void linkUpdateRegen(LinkFun breakLinks,
+                std::tuple<NeighArgs...> neighArgs, std::tuple<LinkSideArgs...> linkSideArgs, std::tuple<LinkArgs...> linkArgs)
+```
+
+Both take the function to apply to each link and the aguments to unpack. 
 
 ```c++
 hiDem.linkUpdate(breakLinks,
@@ -482,6 +496,59 @@ hiDem.linkUpdate(breakLinks,
 );
 ```
 The first tuple names what argments to fetch from the particles at each end of the link from the particle data, the second what data to fetch from each side of the link from the link data, and finally the least one is what data to fetch for each link.
+
+### Regenerating links
+
+Regenerating link also reqires linkRegen to also be enabled in the configuration file.
+
+```toml
+[linkRegen]
+# enable regeneration of links
+enabled = true
+```
+
+Link generation works by having all possible links available, and `linkUpdateRegen` will iterate over all of them, the whole ones and the broken ones, you need to check if a link is active or not and decide if to reactivate it or break it.
+
+An example update links function that does regeneration:
+
+```c++
+    lpReal_t linkLenLimit = (radius+radius)*hiDem.geometry.linkGenScale;
+
+    auto breakLinks = [=]
+    DEVCALLABLE REALT_TEMPL (
+        const hpReal_t &xCord1, const hpReal_t &yCord1, const hpReal_t &zCord1,
+        const lpReal_t &xTheta1, const lpReal_t &yTheta1, const lpReal_t &zTheta1,
+        const hpReal_t &xCord2, const hpReal_t &yCord2, const hpReal_t &zCord2,
+        const lpReal_t &xTheta2, const lpReal_t &yTheta2, const lpReal_t &zTheta2,
+        uint8_t &state, lpReal_t &linkLen, lpReal_t &prob
+    ) {
+        lpReal_t xDist = xCord1 - xCord2;
+        lpReal_t yDist = yCord1 - yCord2;
+        lpReal_t zDist = zCord1 - zCord2;
+        lpReal_t currentLength = sqrtf((xDist * xDist) + (yDist * yDist) + (zDist * zDist));
+
+        // if the state is broken check if the link should be regenerated
+        if (state == 0) {
+            if ((currentLength < linkLenLimit) && (prob > 0.995f)) {
+                state = 1;
+            }
+        // if the link is intact figure out if we want to break it
+        } else {
+            lpReal_t maxBend = std::max(abs(xTheta1 - xTheta2),
+                                        std::max(abs(yTheta1 - yTheta2), abs(zTheta1 - zTheta2)));
+            lpReal_t load = (currentLength - linkLen) / linkLen + bendBreak * maxBend;
+
+            if (load >= maxLoad) {
+                state = 0;
+            }
+
+            if (prob < 1.0f - exp(-50.0f * load)) {
+                state = 0;
+            }
+        }
+    };
+```
+
 
 # Geometry functions
 
@@ -574,6 +641,88 @@ vForce += extForcePtr->vForce->interp(xCord, yCord);
 wForce += extForcePtr->wForce->interp(xCord, yCord);
 ```
 
+# Random data
+
+In order to generate random data to be used by different parts of the code you can create a `BulkRandom` object. The obect takes a template argument for what data type to generate.
+
+On the bulk random object you need to set the size using
+```c++
+void setSize(int newCount)
+```
+
+And then generate the data using
+
+```c++
+void reGenerate()
+```
+
+If the data is used in every timestep the `reGenerate` function needs to be called every iteration.
+
+To get the vector of random data out of the `BulkRandom` object use the `getVec` function, or just directly access the `values` member.
+
+```c++
+ManVec<T> &getVec()
+```
+
+The vector you get out can then be used as any members of particle or link data. 
+
+The example below illustrates how to generate random data to be used for randomly breaking links
+```c++
+BulkRandom<lpReal_t> breakProbs;
+
+auto breakLinks = [=]
+DEVCALLABLE REALT_TEMPL (
+    const hpReal_t &xCord1, const hpReal_t &yCord1, const hpReal_t &zCord1,
+    const lpReal_t &xTheta1, const lpReal_t &yTheta1, const lpReal_t &zTheta1,
+    const hpReal_t &xCord2, const hpReal_t &yCord2, const hpReal_t &zCord2,
+    const lpReal_t &xTheta2, const lpReal_t &yTheta2, const lpReal_t &zTheta2,
+    uint8_t &state, lpReal_t &linkLen, lpReal_t &prob) {
+        ...
+    }
+)
+...
+
+while (hiDem.run()) {
+    ...
+    breakProbs.setSize(lData.numLocal);
+    breakProbs.reGenerate();
+
+    hiDem.linkUpdateRegen(breakLinks,
+                    packVecPtrs(pData.xCord, pData.yCord, pData.zCord,
+                    pData.xTheta, pData.yTheta, pData.zTheta),
+                    packVecPtrs(),
+                    packVecPtrs(lData.state, lData.initialLen, breakProbs.values));
+}
+```
+
+# Dynamic variables
+
+To access dynamically chaning variables in any of the functions in the timestep loop these need to be enclosed inside a `DynamicVariable` class, this holds one variable, and must be allocated with new.
+
+Currentrly the code only uses and supports passing around these to the `applyForce` function, and only really currently useable for getting access to the current time step. As such there is a helper function, `getTimeStep` to directly get the `DynamicVariable` object for the timestep from `HiDEMLib`, and in that case the value will be updated by the internals of `HiDEMLib`.
+
+In `HiDEMLib` the function for getting the timestep as a dynamic variable looks as follows
+```c++
+DynamicVariable<int> &getTimeStep()
+```
+
+A shortened example using the current timestep in the `applyForce` function. The XXX sample illustrates how to utilize it in more detail.
+
+```c++
+    auto applyForce = [=] DEVCALLABLE(
+        pInd_t pInd, HiDEMParticleData &pData, DynamicVariable<int> &timeStep) {
+        int ts = timeStep.get();
+        ...
+    }
+    ...
+
+    while (hiDem.run()) {
+        ...
+        hiDem.applyForce(applyForce, hiDem.getTimeStep());
+        ...
+    }
+```
+
 # Iterate over particles / links outside HiDEMLib
 
 ## Particles
@@ -597,7 +746,7 @@ pData.iterateOwnedParticles(OffloadExec(), [=] DEVCALLABLE (pInd_t pInd, HiDEMPa
 }, pData);
 ```
 
-The lambda function applied to each particle gets called with the particle index and any arguments passed after the lambda to the `iterateOwnedParticles`, in this case we pass in a reference to `HiDEMParticleData` to have easy access to the particle data fields.
+The lambda function applied to each particle gets called with the particle index and any arguments passed after the lambda to the `iterateOwnedParticles`, in this case we pass in a reference to `HiDEMParticleData` to have easy access to the particle data fields. 
 
 ## Links
 

@@ -31,12 +31,13 @@ template <typename T>
 void getDropReorder(ManVec<T> &droppedLocalIndexes, ManVec<T> &newOrder, size_t count) {
 
 #ifdef GPU
-    ManVec<char> flags(count);
+    ManVec<char> flags;
+    flags.resize(count);
 
     auto flagPTr = flags.data();
     ManVec<T> newOrderIn;
-    newOrder.resize(count, false);
-    newOrderIn.resize(count, false);
+    newOrder.resize(count);
+    newOrderIn.resize(count);
     T *newOrderPtr = newOrder.data();
     T *newOrderInPtr = newOrderIn.data();
     T *droppedLocalIndexesPtr = droppedLocalIndexes.data();
@@ -60,16 +61,16 @@ void getDropReorder(ManVec<T> &droppedLocalIndexes, ManVec<T> &newOrder, size_t 
             newOrderIn.data(), flags.data(), newOrder.data(), d_num_selected_out, count);
 
     // Allocate temporary storage
-    devMalloc((void**)&d_temp_storage, temp_storage_bytes);
-    devMalloc((void**)&d_num_selected_out, sizeof (int));
+    getErrorDevApi( devMalloc((void**)&d_temp_storage, temp_storage_bytes) );
+    getErrorDevApi( devMalloc((void**)&d_num_selected_out, sizeof (int)) );
     // Run selection
     cubX::DevicePartition::Flagged(
             d_temp_storage, temp_storage_bytes,
             newOrderIn.data(), flags.data(), newOrder.data(), d_num_selected_out, count);
     Iterator::syncAll();
 
-    devFree(d_temp_storage);
-    devFree(d_num_selected_out);
+    getErrorDevApi( devFree(d_temp_storage) );
+    getErrorDevApi( devFree(d_num_selected_out) );
 #else
 
     ParallelSort sorter;
@@ -80,7 +81,7 @@ void getDropReorder(ManVec<T> &droppedLocalIndexes, ManVec<T> &newOrder, size_t 
     Iterator::syncAll();
 
 
-    newOrder.resize(count, false);
+    newOrder.resize(count);
     T *newOrderPtr = newOrder.data();
     T *droppedLocalIndexesPtr = droppedLocalIndexes.data();
 

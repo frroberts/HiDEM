@@ -6,6 +6,8 @@
 #define HIDEMGEOMETRY_H
 #include <toml/value.hpp>
 
+#include "LoggerV2/RangeCollection.h"
+
 #include "Generators/ParticleGenerator.h"
 #include "Geometry/GeometryCollection.h"
 #include "Geometry/InputGeometry.h"
@@ -17,6 +19,7 @@
 
 #include "Generators/LinkGenerator.h"
 
+
 class HiDEMGeometry {
 public:
     Real3 lowerLimit;
@@ -27,15 +30,16 @@ public:
     bool zeroCenter = false;
 
     std::shared_ptr<ParticleGenerator> pGenPtr;
-    LinkGenerator lGen;
+    LinkGenerator *lGen;
 
     int breakLinkSeed;
     int breakLinkSeedOffset;
     double linkGenScale;
 
     std::vector<Map<double> *> particleGenerateProbabilities;
-    std::vector<std::vector<int> > linkToTypes;
     std::vector<Map<double> *> linkGenerateProbabilities;
+
+    ManVec<std::pair<int, int> > linkToPairs;
 
     std::vector<std::string> boundingGeometryStrings;
 
@@ -67,6 +71,7 @@ public:
         setupLimits(parser);
         setupLattice(scale, parser.table);
 
+
         // todo dist is possily wrong
         geomCollection.generatedAllAccel(maxRadius);
     }
@@ -79,6 +84,16 @@ public:
     void setupLattice(double scale, const toml::value &tomlTable);
 
     void setupLimits(ArgParser &parser);
+
+    ~HiDEMGeometry() {
+        for (auto p : particleGenerateProbabilities) {
+            delete p;
+        }
+        for (auto p : linkGenerateProbabilities) {
+            delete p;
+        }
+        delete lGen;
+    }
 };
 
 

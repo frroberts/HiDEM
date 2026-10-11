@@ -31,7 +31,7 @@ public:
     }
 
     DEVCALLABLE
-    void processInitLink(ElementaryLink &l, HiDEMLinkDataExt &lData, lInd_t outInd) {
+    void processInitLink(ElementaryLink &l, HiDEMLinkDataExt &lData, lInd_t outInd, pInd_t sideIndEndA, pInd_t sideIndEndB) {
         lData.globalKeyEndA[outInd] = (l.globalKeyParticleA);
         lData.globalKeyEndB[outInd] = (l.globalKeyParticleB);
         lData.owners[outInd] = (l.owner);
@@ -42,8 +42,8 @@ public:
 
         lData.maxLength[outInd] = std::numeric_limits<lpReal_t>::min();
 
-        pInd_t sideIndEndA = (outInd * 2);
-        pInd_t sideIndEndB = (outInd * 2) + 1;
+        lData.sideIndEndA[outInd] = sideIndEndA;
+        lData.sideIndEndB[outInd] = sideIndEndB;
 
         lData.sideIndEndA[outInd] = sideIndEndA;
         lData.sideIndEndB[outInd] = sideIndEndB;

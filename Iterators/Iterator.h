@@ -609,51 +609,6 @@ namespace {
 #endif
             //
         }
-
-        template<typename T>
-        DEVCALLABLE
-        static void atomicAddVal(T &target, const T val) {
-#ifdef __CUDA_ARCH__
-            atomicAdd(&target, val);
-#elif __HIP_DEVICE_COMPILE__
-            atomicAdd(&target, val);
-#else
-#pragma omp atomic
-            target += val;
-#endif
-        }
-
-        template<typename T>
-        DEVCALLABLE
-        static T atomicIncVal(T &target) {
-#ifdef __CUDA_ARCH__
-            return atomicAdd(&target, 1);
-#elif __HIP_DEVICE_COMPILE__
-            return atomicAdd(&target, 1);
-#else
-            T old;
-#pragma omp atomic capture
-            old = target++;
-            return old;
-#endif
-
-        }
-/*
-        template<typename T>
-        DEVCALLABLE
-        static T atomicCASVal(T &target, T comp, T val) {
-#ifdef __CUDA_ARCH__
-            return atomicCAS((unsigned long long int *)&target, (unsigned long long int )comp, (unsigned long long int )val);
-#elif __HIP_DEVICE_COMPILE__
-            return atomicCAS((unsigned long long int )*&target, (unsigned long long int )comp, (unsigned long long int )val);
-#else
-
-#pragma omp atomic compare
-        if (target == comp)
-            target = val;
-#endif
-        }
-*/
     };
 }
 

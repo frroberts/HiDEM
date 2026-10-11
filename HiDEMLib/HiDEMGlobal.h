@@ -11,6 +11,4 @@ typedef float ctReal_t;
 typedef double ctReal_t;
 #endif
 
-#define maxLinks 13
-
 #endif //PHELL_HIDEMGLOBAL_H

@@ -16,7 +16,7 @@ add_library(PLiB STATIC
         Geometry/Map2dLoader.h
         Util/Util.h
         Util/Util.cpp
-        Transport/Communicator.h
+        Transport/CommunicatorIndividual.h
         Transport/Transporter.h
         Balancer/Balancer.cpp
         Logger/Logger.h
@@ -120,9 +120,11 @@ elseif (ENABLE_HIP)
 
 endif()
 
-target_include_directories(PLiB PUBLIC ${HDF5_INCLUDE_DIRS})
-target_link_libraries(PLiB PUBLIC ${HDF5_LIBRARIES})
-target_link_libraries(PLiB PUBLIC ${HDF5_HL_LIBRARIES})
+if (ENABLE_HDF5)
+    target_include_directories(PLiB PUBLIC ${HDF5_INCLUDE_DIRS})
+    target_link_libraries(PLiB PUBLIC ${HDF5_LIBRARIES})
+    target_link_libraries(PLiB PUBLIC ${HDF5_HL_LIBRARIES})
+endif ()
 
 target_link_libraries(PLiB PUBLIC Iterators)
 target_include_directories(PLiB INTERFACE .)

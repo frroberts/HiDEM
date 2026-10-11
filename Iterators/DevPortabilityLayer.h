@@ -20,6 +20,7 @@
 #elif ENABLE_HIP
 // #include <hip_runtime_api.h>
 #include "hip/hip_runtime.h"
+#include "rocm_smi/rocm_smi.h"
 // #include <roctracer_ext.h>
 #else
 #endif
@@ -79,6 +80,7 @@ inline devError_t devMallocManaged(void** ptr, size_t size){
     return hipMalloc(ptr, size);
 // #endif
 #else
+    *ptr = malloc(size);
     return 0;
 #endif
 }
@@ -109,6 +111,7 @@ inline devError_t devFree(void* ptr){
 #elif ENABLE_HIP
     return hipFree(ptr);
 #else
+    free(ptr);
     return 0;
 #endif
 }
@@ -315,7 +318,6 @@ inline void xvtxRangeEnd(xvtxRangeId_t range){
 #else
 #endif
 }
-
 
 
 #endif //PHELL_DEVPORTABILITYLAYER_H

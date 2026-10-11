@@ -33,7 +33,7 @@ public:
     ParallelSelect() {
         //
 #ifdef GPU
-    devMallocManaged((void**)&cubNumSelected, sizeof(size_t));
+    getErrorDevApi(devMallocManaged((void**)&cubNumSelected, sizeof(size_t)));
 
 #endif
     }
@@ -42,9 +42,9 @@ public:
 #ifdef GPU
         if(temp != nullptr)
         {
-            devFree(temp);
+            getErrorDevApi(devFree(temp));
         }
-        devFree(cubNumSelected);
+        getErrorDevApi(devFree(cubNumSelected));
 
 #endif
     }
@@ -59,9 +59,9 @@ public:
         cubX::DeviceSelect::Unique(nullptr, newNeededBytes, input.ptr, output.ptr, cubNumSelected, input.size());
         if (newNeededBytes > tempBytes) {
             if (temp != nullptr) {
-                devFree(temp);
+                getErrorDevApi(devFree(temp));
             }
-            devMalloc(&temp, newNeededBytes);
+            getErrorDevApi(devMalloc(&temp, newNeededBytes));
             Iterator::syncAll();
             tempBytes = newNeededBytes;
         }
@@ -74,7 +74,7 @@ public:
         output.resize(input.size());
         std::memcpy(output.ptr, input.ptr, sizeof(T)*input.size());
 
-        auto endPos = std::unique(EXECPOLICY output.begin(), output.end());
+        auto endPos = std::unique(STDEXECPOLICY output.begin(), output.end());
         output.resize(std::distance(output.begin(), endPos));
 #endif
     }
@@ -90,9 +90,9 @@ public:
                                       selected.ptr, cubNumSelected, flags.size());
         if (newNeededBytes > tempBytes) {
             if (temp != nullptr) {
-                devFree(temp);
+                getErrorDevApi(devFree(temp));
             }
-            devMalloc(&temp, newNeededBytes);
+            getErrorDevApi(devMalloc(&temp, newNeededBytes));
             Iterator::syncAll();
             tempBytes = newNeededBytes;
         }

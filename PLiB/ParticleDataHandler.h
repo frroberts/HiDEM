@@ -6,6 +6,7 @@
 #define PARTICLEDATAHANDLER_H
 
 #include "Util/DropReorder.h"
+#include "Generators/ElementaryParticle.h"
 
 // any autocomplete software will have a freakout about this file,
 // just trust that the template it inherits from provides the missing variables
@@ -38,11 +39,11 @@ public:
 
         Iterator::syncAll();
 
-        Iterator::iterate(OffloadExec(), [=] DEVLAMBDA (pInd_t i, HiDEMParticleData &pData) {
+        Iterator::iterate(OffloadExec(), [=] DEVLAMBDA (pInd_t i, ParticleDataHandler<UserData> &pData) {
             pData.ownedIndexes[i] = orderInvertedPtr[pData.ownedIndexes[i]];
         }, this->ownedIndexes.size(), *this);
 
-        Iterator::iterate(OffloadExec(), [=] DEVLAMBDA (pInd_t i, HiDEMParticleData &pData) {
+        Iterator::iterate(OffloadExec(), [=] DEVLAMBDA (pInd_t i, ParticleDataHandler<UserData> &pData) {
             pData.nonOwnedIndexes[i] = orderInvertedPtr[pData.nonOwnedIndexes[i]];
         }, this->nonOwnedIndexes.size(), *this);
 
@@ -96,7 +97,7 @@ public:
         // no non owned indexes left
         this->nonOwnedIndexes.clear();
         // owned indexes are now 0-newSize
-        Iterator::iterate(OffloadExec(), [] DEVCALLABLE (int ind, HiDEMParticleData &pData) {
+        Iterator::iterate(OffloadExec(), [] DEVCALLABLE (int ind, ParticleDataHandler<UserData> &pData) {
             pData.ownedIndexes[ind] = ind;
         }, newSize, *this);
         Iterator::syncAll();
@@ -122,19 +123,42 @@ public:
 
         resize(particles.size());
 
-        auto particlesPtr = particles.ptr;
+        auto particlesPtr = particles.data();
         Iterator::syncAll();
         Iterator::iterate(OffloadExec(), [=] DEVCALLABLE(ind_t i,  UserData &pData) {
             auto &p = particlesPtr[i];
             int outInd = i;
             // does not work anyway, this pointer now needs to be a member function
-            this->processInitParticle(p, pData, outInd);
+            pData.processInitParticle(p, pData, outInd);
         }, particles.size(), *this);
 
         Iterator::syncAll();
 
         generateOwnedNonOwned(this->owners, this->ownedIndexes,
                               this->nonOwnedIndexes, this->numLocal);
+    }
+    int getCurrentAllocated() {
+        uint64_t sum = 0;
+
+        callForTupleElem(this->getFieldTupleInput(), [&](auto vecPTr) {
+            sum+= vecPTr->cap;
+        });
+        callForTupleElem(this->getFieldTupleOutput(), [&](auto vecPTr) {
+            sum+= vecPTr->cap;
+        });
+        return sum;
+    }
+
+    int getCurrentSize() {
+        uint64_t sum = 0;
+
+        callForTupleElem(this->getFieldTupleInput(), [&](auto vecPTr) {
+            sum+= vecPTr->size();
+        });
+        callForTupleElem(this->getFieldTupleOutput(), [&](auto vecPTr) {
+            sum+= vecPTr->size();
+        });
+        return sum;
     }
 };
 

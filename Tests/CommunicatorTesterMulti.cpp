@@ -4,7 +4,7 @@
 
 #include <catch2/catch.hpp>
 
-#include <Transport/Communicator.h>
+#include <Transport/CommunicatorIndividual.h>
 #include <Iterator.h>
 
 #include <Domain.h>
@@ -61,7 +61,7 @@ TEST_CASE( "Generating incomming indexes", "[Communicator2Rank]" ) {
     pTrans.getOutgoingHalo(world, pData);
     pTrans.getIncomming();
 
-    Communicator<double> pComm = pTrans.getCommunicator<double>();
+    CommunicatorIndividual<double> pComm = pTrans.getCommunicator<double>();
     pComm.makeLocalIndexes(mapper);
 
     if(world.self == 0)
@@ -124,10 +124,10 @@ TEST_CASE( "Update remote particle data", "[Communicator2Rank]" ) {
     pTrans.getOutgoingHalo(world, pData);
     pTrans.getIncomming();
 
-    Communicator<double> pComm = pTrans.getCommunicator<double>();
+    CommunicatorIndividual<double> pComm = pTrans.getCommunicator<double>();
     pComm.makeLocalIndexes(mapper);
 
-    pComm.setNumBuffers(1);
+    pComm.setupBuffers(1);
     pComm.packCommData(pData.xCord, 0);
 
     // see that we actually pack the correct data
@@ -254,7 +254,7 @@ TEST_CASE( "Update remote link data", "[Communicator2Rank]" ) {
     LinkTransporter lTrans;
     lTrans.getOutgoingHalo(world, pData, lData);
     lTrans.getIncomming();
-    Communicator<uint8_t> lComm = lTrans.getCommunicator<uint8_t>();
+    CommunicatorIndividual<uint8_t> lComm = lTrans.getCommunicator<uint8_t>();
     lComm.makeLocalIndexes(lMapper);
 
     //std::cout << " size " << lMapper.globalToLocal.size() << std::endl;
@@ -281,7 +281,7 @@ TEST_CASE( "Update remote link data", "[Communicator2Rank]" ) {
         lData.state[4] = 0;
     }
 
-    lComm.setNumBuffers(1);
+    lComm.setupBuffers(1);
     lComm.packCommData(lData.state, 0);
     lComm.postRecvs();
     lComm.postSends();
@@ -364,7 +364,7 @@ TEST_CASE( "Reverse update CT data", "[Communicator2Rank]" ) {
     LinkTransporter lTrans;
     lTrans.getOutgoingHalo(world, pData, lData);
     lTrans.getIncomming();
-    Communicator<bool> lComm = lTrans.getCommunicator<bool>();
+    CommunicatorIndividual<bool> lComm = lTrans.getCommunicator<bool>();
     lComm.makeLocalIndexes(lMapper);
 
 

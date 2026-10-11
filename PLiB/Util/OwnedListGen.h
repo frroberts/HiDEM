@@ -10,21 +10,13 @@
 #include "Util.h"
 #include "../Global.h"
 
-#ifdef GPU
-#include <thrust/partition.h>
-#include <thrust/execution_policy.h>
-#define OWNEDLISTGENEXEC thrust::device,
-namespace ownedListGenSTL = thrust;
-
-#else
-// do ptstl here for host with pstl
-#define OWNEDLISTGENEXEC
-namespace ownedListGenSTL = std;
-#endif
+#include <ExecutionPolicy.h>
 
 template <typename T>
 void generateOwnedNonOwned(ManVec<int> &owners, ManVec<T> &ownedIndexes, ManVec<T> &nonOwnedIndexes, size_t count) {
-    ManVec<pInd_t> allIndexes(count);
+    ManVec<pInd_t> allIndexes;
+    allIndexes.resize(count);
+
     auto allIndexesPtr = allIndexes.data();
     Iterator::iterate(OffloadExec(), [=] DEVCALLABLE(ind_t i) {
         allIndexesPtr[i] = i;
@@ -33,10 +25,10 @@ void generateOwnedNonOwned(ManVec<int> &owners, ManVec<T> &ownedIndexes, ManVec<
 
     int self = getLocalRank();
     auto ownerPtr = owners.data();
-    ownedListGenSTL::stable_partition(OWNEDLISTGENEXEC allIndexes.begin(), allIndexes.end(), [=] DEVCALLABLE (pInd_t pInd) {
+    stx::stable_partition(EXECPOLICY allIndexes.begin(), allIndexes.end(), [=] DEVCALLABLE (pInd_t pInd) {
         return ownerPtr[pInd] == self;
     });
-    auto partPoint = ownedListGenSTL::partition_point(OWNEDLISTGENEXEC allIndexes.begin(), allIndexes.end(), [=] DEVCALLABLE (pInd_t pInd) {
+    auto partPoint = stx::partition_point(EXECPOLICY allIndexes.begin(), allIndexes.end(), [=] DEVCALLABLE (pInd_t pInd) {
         return ownerPtr[pInd] == self;
     });
 

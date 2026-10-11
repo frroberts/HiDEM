@@ -1,10 +1,11 @@
 
-add_library(Iterators INTERFACE )
+add_library(Iterators INTERFACE
+        ParallelListGen.h
+        ThrustHelper.h)
 target_sources(Iterators INTERFACE
         DevCall.h
         ManVec.h
         Allocator.h
-        ScratchMem.h
         ParallelReduce.h
         ExecutionPolicy.h
         Iterator.h

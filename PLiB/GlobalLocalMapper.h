@@ -7,16 +7,152 @@
 
 #include <unordered_map>
 #include <algorithm>
+#include <chrono>
 
 #include "Global.h"
 #include "ManVec.h"
 #include "Iterator.h"
 #include <mpi.h>
+#include "AtomicOps.h"
 
-#ifndef OWNHASHMAP
+#include <chrono>
+
+#ifdef GPU
+#include <thrust/sort.h>
+#include <thrust/execution_policy.h>
+#define GLOBALLOCALMAPPEREXEC thrust::device,
+namespace globalLocalMapperSTL = thrust;
+
+#else
+#include <execution>
+// do ptstl here for host with pstl
+// #define GLOBALLOCALMAPPEREXEC std::execution::par,
+#define GLOBALLOCALMAPPEREXEC
+namespace globalLocalMapperSTL = std;
+#endif
 
 template <class gType, class lType>
-class GlobalLocalMapper {
+class GlobalLocalMapperLinProbe : public ManagedParent {
+
+    // gcc also just does identity function for integer types
+    DEVCALLABLE
+    size_t hashFun(gType k) {
+        return (k);
+    }
+
+public:
+
+    gType sentinel = -1;
+    ManVec<lType> values;
+    ManVec<gType> keys;
+    int numMapped = 0;
+    float overSubscription = 2;
+    int realSize;
+
+    DEVCALLABLE
+    lType getLocalInd(gType globalKey) {
+        // needs to check if we find the sentinel as well and return -1 then
+        int pos = hashFun(globalKey) % realSize;
+        if (keys[pos] == globalKey) {
+            return values[pos];
+        } else {
+            int searched = 0;
+            while (keys[pos] != globalKey && searched != realSize) {
+                pos = (pos + 1) % realSize;
+                if (keys[pos] == globalKey) {
+                    return values[pos];
+                }
+                searched++;
+            }
+        }
+        return -1;
+    }
+
+    DEVCALLABLE
+    void map(gType globalKey, lType localInd) {
+        int pos = hashFun(globalKey) % realSize;
+        int searched = 0;
+        gType currentKey;
+        do {
+            {
+                currentKey = keys[pos];
+                if (currentKey == sentinel) {
+                    keys[pos] = globalKey;
+                }
+            }
+            if (currentKey == sentinel) {
+                values[pos] = localInd;
+                numMapped++;
+                return;
+            }
+            pos = (pos + 1) % realSize;
+            searched++;
+        } while (searched != realSize);
+    }
+
+    DEVCALLABLE
+    void mapImpl(gType globalKey, lType localInd) {
+        int pos = hashFun(globalKey) % realSize;
+        int searched = 0;
+        gType currentKey;
+        do {
+            currentKey = Atomic::atomicCASVal(keys[pos],  sentinel, globalKey);
+
+            if (currentKey == sentinel) {
+                values[pos] = localInd;
+                return;
+            }
+            pos = (pos + 1) % realSize;
+            searched++;
+        } while (searched != realSize);
+    }
+
+
+
+    void bulkCreate(ManVec<gKey_t> &gKeys) {
+        //
+        std::chrono::time_point<std::chrono::system_clock> start, end;
+        start = std::chrono::system_clock::now();
+        auto gKeysPtr = gKeys.data();
+        Iterator::iterate(OffloadExec(), [=]DEVLAMBDA(int ind, GlobalLocalMapperLinProbe &mapper){
+            mapper.mapImpl(gKeysPtr[ind], ind);
+        }, gKeys.size(), *this);
+        numMapped += gKeys.size();
+        Iterator::syncAll();
+        end = std::chrono::system_clock::now();
+        auto diff = std::chrono::system_clock::now() - start;
+        std::chrono::duration<double> elapsed = diff;
+        std::cout << elapsed.count() << std::endl;
+    }
+
+    void finalize(){
+        // option to optimize or even just build the table
+    }
+
+    void clear() {
+        auto keysPtr = keys.data();
+        Iterator::iterate(OffloadExec(), [=]DEVLAMBDA(int ind){
+            keysPtr[ind] = -1;
+        }, keys.size());
+        Iterator::syncAll();
+        numMapped = 0;
+    }
+
+    void setSize(size_t size){
+        // option to set the size
+        realSize = size*overSubscription;
+        values.resize(realSize);
+        keys.resize(realSize);
+    }
+
+    size_t numActive(){
+        return numMapped;
+    }
+};
+
+
+template <class gType, class lType>
+class GlobalLocalMapperHash {
 public:
 
     std::unordered_map<gType, lType> globalToLocal;
@@ -27,20 +163,27 @@ public:
         if (pos != globalToLocal.end()) {
             return (pos->second);
         }
-        //exit(1);
         return -1;
     }
 
     void map(gType globalKey, lType localInd) {
         auto pos = globalToLocal.find(globalKey);
         if (pos != globalToLocal.end()) {
-                int self;
-    self = 0;
-    MPI_Comm_rank(MPI_COMM_WORLD, &self);
-            std::cout << self << " remapping existing original " << globalKey << " " << pos->second << " new " << localInd << std::endl;
+            int self;
+            self = 0;
+            MPI_Comm_rank(MPI_COMM_WORLD, &self);
+            std::cout << self << " remapping existing original " << globalKey << " " << pos->second << " new " <<
+                    localInd << std::endl;
             exit(1);
         }
         globalToLocal[globalKey] = localInd;
+    }
+
+    void bulkCreate(ManVec<gKey_t> &gKeys) {
+        //
+        for (ind_t i = 0; i < gKeys.size(); ++i) {
+            map(gKeys[i], i);
+        }
     }
 
     void finalize(){
@@ -61,151 +204,130 @@ public:
     }
 };
 
-#else
-/*
-// builds on the idea that all indexes get mapped, so the local key is the location of the global one
 template <class gType, class lType>
-class GlobalLocalMapperBinSearch {
+class GlobalLocalMapperBinSearch : public ManagedParent{
 public:
 
     ManVec<std::pair<gType, lType>> globalLocalLookup;
+
+    int numMapped = 0;
 
     DEVCALLABLE
     lType getLocalInd(gType globalKey) {
         // binary search for global key, return index it was found at
 
+        int left = 0;
+        int right = globalLocalLookup.size() - 1;
+        while (left <= right) {
+            int m = (left + right) / 2;
+            gType val = globalLocalLookup[m].first;
+            if (val < globalKey) {
+                left = m + 1;
+            } else if (val > globalKey) {
+                right = m - 1;
+            } else {
+                return globalLocalLookup[m].second;
+            }
+        }
+        return -1;
+
+        /*
         int loc;
         int left = 0;
         int right = globalLocalLookup.size() - 1;
         while (left <= right) {
             loc = (left + right) / 2;
+            // sanity check loc here, although it cannot be wrong !!
+            if ( loc < 0 || loc >= globalLocalLookup.size() ) {
+                return -1;
+            }
             if (globalLocalLookup[loc].first == globalKey) {
-                return loc;
-
-            } else if (globalLocalLookup[loc].first < globalKey)
+                return globalLocalLookup[loc].second;
+            }
+            if (globalLocalLookup[loc].first < globalKey)
                 left = loc + 1;
             else
                 right = loc - 1;
         }
+        //std::cout << "fail" << std::endl;
+        //exit(-1);
         return -1;
+
+        */
     }
-    
-    DEVCALLABLE
+
     void map(gType globalKey, lType localInd) {
         //
         globalLocalLookup[localInd].first = globalKey;
         globalLocalLookup[localInd].second = localInd;
+        numMapped++;
+    }
+
+    void bulkGetLocal(ManVec<gType> &gKeys, ManVec<lType> &lKeys, int lKeyStart) {
+
+        auto gKeyPtr  = gKeys.data();
+        auto lKeyPtr  = lKeys.data();
+
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i, GlobalLocalMapperBinSearch<gType, lType> &mapper) {
+            auto targetGKey = gKeyPtr[i];
+            ind_t localIndex = mapper.getLocalInd(targetGKey);
+            assert(localIndex != -1);
+            lKeyPtr[lKeyStart + i] = localIndex;
+        }, gKeys.size(), *this);
+        // manually check last error here to catch miss mappings ?
+        Iterator::syncAll();
+    }
+
+    void bulkCreate(ManVec<gKey_t> &gKeys) {
+        //
+        auto keyPtr = gKeys.data();
+        auto mapPtr = globalLocalLookup.data();
+
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i) {
+            mapPtr[i].first = keyPtr[i];
+            mapPtr[i].second = i;
+        }, gKeys.size());
+
+        Iterator::syncAll();
+        numMapped += gKeys.size();
     }
 
     void finalize(){
-        // std::sort(globalLocalLookup.begin(), globalLocalLookup.end(), [](auto a, auto b){ return a.first < b.first;});
+        globalLocalMapperSTL::sort(GLOBALLOCALMAPPEREXEC globalLocalLookup.begin(), globalLocalLookup.end(),
+            [] DEVCALLABLE (std::pair<gType, lType> a, std::pair<gType, lType> b) {
+            return a.first < b.first;
+        });
+        Iterator::syncAll();
+        // std::sort(globalLocalLookup.begin(), globalLocalLookup.end(), [] DEVCALLABLE (std::pair<gType, lType> a, std::pair<gType, lType> b){ return a.first < b.first;});
     }
 
     void clear() {
-        for (int i = 0; i < globalLocalLookup.size(); ++i) {
-            globalLocalLookup[i].first = -1;
-            globalLocalLookup[i].second = -1;
-        }
+        auto mapPtr = globalLocalLookup.data();
+
+        Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (int i) {
+            mapPtr[i].first = -1;
+            mapPtr[i].second = -1;
+        }, globalLocalLookup.size());
+
+        Iterator::syncAll();
+        numMapped = 0;
     }
 
     void setSize(size_t size){
         // option to set the size
         globalLocalLookup.resize(size);
-    }
-};
- */
-
-// builds on the idea that all indexes get mapped, so the local key is the location of the global one
-template<class gType, class lType>
-class GlobalLocalMapper : public ManagedParent{
-public:
-
-    DEVCALLABLE
-
-    size_t hashFun(gType k) {
-
-        k ^= k >> 33;
-        k *= uint64_t(0xff51afd7ed558ccd);
-        k ^= k >> 33;
-        k *= uint64_t(0xc4ceb9fe1a85ec53);
-        k ^= k >> 33;
-
-        return k% (cap-1);;
+        clear();
     }
 
-    // 32 bit Murmur3 hash
-    /*
- uint32_t hashFun(uint32_t k)
-{
-    k ^= k >> 16;
-    k *= 0x85ebca6b;
-    k ^= k >> 13;
-    k *= 0xc2b2ae35;
-    k ^= k >> 16;
-    return k % (cap-1);
-}
-     */
-
-    int cap;
-    int active = 0;
-
-    ManVec<std::pair<gType, lType>> globalLocalLookup;
-
-    DEVCALLABLE
-    lType getLocalInd(gType globalKey) {
-        gType place = hashFun(globalKey);
-        while (globalLocalLookup[place].first != globalKey){
-            if(globalLocalLookup[place].first == -1) {
-                return -1;
-            } else {
-                place++;
-                place = place % (cap-1);
-            }
-        };
-        return globalLocalLookup[place].second;
-    }
-
-    void map(gType globalKey, lType localInd) {
-        gType place = hashFun(globalKey);
-        // std::cout << place << std::endl;
-
-        do{
-            if(globalLocalLookup[place].first == -1) {
-                globalLocalLookup[place].first = globalKey;
-                globalLocalLookup[place].second = localInd;
-                break;
-            } else {
-                place++;
-                place = place % (cap-1);
-            }
-        } while (globalLocalLookup[place].first != globalKey);
-
-        active++;
-    }
-
-    void finalize(){
-        // std::cout << "collisions " << collisions << " " << cap <<  " " << firstPlace << std::endl;
-    }
-
-    void clear() {
-        for (int i = 0; i < cap; ++i) {
-            globalLocalLookup[i].first = -1;
-            globalLocalLookup[i].second = -1;
-        }
-        active = 0;
-    }
-
-    void setSize(size_t size){
-        // set cap to 2x size to ensure load factor is not too high
-        cap = size*4;
-        globalLocalLookup.resize(cap);
-    }
 
     size_t numActive(){
-        return active;
+        return numMapped;
     }
 };
 
-#endif
+template <class gType, class lType>
+//using GlobalLocalMapper = GlobalLocalMapperLinProbe<gType, lType>;
+using GlobalLocalMapper = GlobalLocalMapperBinSearch<gType, lType>;
+// using GlobalLocalMapper = GlobalLocalMapperHash<gType, lType>;
 
 #endif //PHELL_GLOBALLOCALMAPPER_H

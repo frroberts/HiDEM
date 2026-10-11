@@ -100,23 +100,18 @@ public:
 
 
     std::tuple<hpReal_t, hpReal_t, hpReal_t, hpReal_t, hpReal_t, hpReal_t> getLimits() {
-        //
 
-        hpReal_t xMax = std::numeric_limits<hpReal_t>::min();
-        hpReal_t yMax = std::numeric_limits<hpReal_t>::min();
-        hpReal_t zMax = std::numeric_limits<hpReal_t>::min();
-        hpReal_t xMin = std::numeric_limits<hpReal_t>::max();
-        hpReal_t yMin = std::numeric_limits<hpReal_t>::max();
-        hpReal_t zMin = std::numeric_limits<hpReal_t>::max();
+        auto [xMin, xMax] = stx::minmax_element(EXECPOLICY xCord.begin(), xCord.end());
+        auto [yMin, yMax] = stx::minmax_element(EXECPOLICY yCord.begin(), yCord.end());
+        auto [zMin, zMax] = stx::minmax_element(EXECPOLICY zCord.begin(), zCord.end());
 
-        reducer.minMax(xMin, xMax, xCord);
-        reducer.minMax(yMin, yMax, yCord);
-        reducer.minMax(zMin, zMax, zCord);
-
-        return std::make_tuple(xMax, yMax, zMax, xMin, yMin, zMin);
+        return std::make_tuple(*xMax, *yMax, *zMax, *xMin, *yMin, *zMin);
     }
 
     std::tuple<hpReal_t, hpReal_t, hpReal_t, hpReal_t, hpReal_t, hpReal_t> getLimitsOwned() {
+
+
+
         hpReal_t xMax = std::numeric_limits<hpReal_t>::min();
         hpReal_t yMax = std::numeric_limits<hpReal_t>::min();
         hpReal_t zMax = std::numeric_limits<hpReal_t>::min();
@@ -154,17 +149,11 @@ public:
         mapper.setSize(globalKeys.size());
         mapper.clear();
 
-        for (size_t i = 0; i < globalKeys.size(); ++i) {
-            if(globalKeys[i] < 100){
-            //printf("Fail remap %lld \n", globalKeys[i]);
-        }
-            mapper.map(globalKeys[i], i);
-        }
+        mapper.bulkCreate(globalKeys);
 
         mapper.finalize();
         if (mapper.numActive() != numLocal)
             std::cout << "mapping different number of particles than state particles " << mapper.numActive() << " " << numLocal << " " << globalKeys.size() << std::endl;
-        //std::cout << " remap " << globalKeys.size() << " " << mapper.globalToLocal.size() << std::endl;
         auto end = std::chrono::steady_clock::now();
         std::chrono::duration<double> elapsed_seconds = end - start;
         //std::cout << globalKeys.size() << " elapsed time part: " << elapsed_seconds.count() << "s\n";

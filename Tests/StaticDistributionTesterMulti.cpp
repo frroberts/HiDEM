@@ -5,7 +5,7 @@
 #include <catch2/catch.hpp>
 
 
-#include <Transport/Communicator.h>
+#include <Transport/CommunicatorIndividual.h>
 #include "Generators/FCCParticleGenerator.h"
 #include <Iterator.h>
 

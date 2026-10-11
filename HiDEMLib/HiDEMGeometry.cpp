@@ -22,14 +22,15 @@ ManVec<ElementaryParticle> HiDEMGeometry::generateParticles(Domain ownDomain) {
 
 ManVec<ElementaryLink> HiDEMGeometry::generateLinks(ParticleData *pDataPtr) {
         int seed = breakLinkSeed + (getLocalRank() * breakLinkSeedOffset);
-        return lGen.generateLinksBreakProbMulti(linkGenScale, maxRadius, *pDataPtr, linkGenerateProbabilities,
-                                                 seed, linkToTypes);
+
+        return lGen->generateLinksBreakProbMulti(maxRadius, *pDataPtr, linkGenerateProbabilities, seed);
     }
 
 void HiDEMGeometry::parseIceParam(const toml::value &tomlTable) {
     // make different ice paramters
     const auto iceParameters = toml::find<std::vector<toml::table> >(tomlTable, "iceParameters");
 
+    int ind = 0;
     for (toml::value tomlBase: iceParameters) {
         std::string boundingString = toml::find<std::string>(tomlBase,
                                                              "boundingGeometry");
@@ -52,11 +53,12 @@ void HiDEMGeometry::parseIceParam(const toml::value &tomlTable) {
         std::vector<int> linkWith;
 
         for (int val: tomlLinkTo) {
-            linkWith.push_back(val); // tomlBase["linkWith"][j].value<int>().value());
+            linkToPairs.push_back({ind, val});
         }
 
         boundingGeometryStrings.push_back(boundingString);
-        linkToTypes.push_back(linkWith);
+
+        ind++;
     }
 }
 
@@ -98,6 +100,11 @@ void HiDEMGeometry::setupLattice(double scale, const toml::value &tomlTable) {
         std::cout << "please specify lattice type" << std::endl;
         exit(1);
     }
+
+    lGen = new LinkGenerator();
+    lGen->setDistScale(toml::find<double>(latticeBase, "linkGenScale"));
+    lGen->setLinkTo(linkToPairs);
+
 }
 
 // standalone if returning reals, and taking either full geometry or its limits

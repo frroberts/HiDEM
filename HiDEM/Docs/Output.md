@@ -32,6 +32,28 @@ If either `outXXFile` or `outXXType` are not defiend no output will be written, 
 | Vtk  | VTK  | Particles | Output data in native VTK format, binary output, combines data from all ranks into one file | Buggy, use VtkHdf instead, to be removed |
 | Csv  | CSV  |  Particles, Links | Output Ascii data into CSV files, one file per rank | Slow, creates large files, don't use for production runs |
 
+### HDF5 tweaks and asynchronous IO for Vtkhdf
+
+HDF5 and VtkHdf both support compression. Adding compression can significantly reduce the size of the output files, and it is entirely transparent to most ? HDF5 readers.
+It does have an impact on the performance of the IO routines however, this can be somewhat mitigated by tweaking the compression ratio.
+As a guideline a compression level of 1 halves the vtkhdf filesize, and 9 would halve it again.
+Asynchronous IO (currently not implemented) can be used to mitigate the performance impact of compression. 
+With it enabled a separate IO thread will be crated to handle the writing and compression in the background, at the cost of increased memory usage.   
+
+The settings for this can be tuned by adding a `[HDF5]` block to the config file. 
+The HDF5 block can include the following, and the following are the default settings 
+```toml
+[HDF5]
+# enable/disable compression
+compression = true
+# the level of compression to use, 1-9
+compressionLevel = 4
+# enable asyc IO, i.e. spin up a separate thread to do the IO, will negate most performance overhead from compression
+# currently not implemented 
+async = true
+```
+Note that these tweaks also affect how the restart files are compressed and the time it takes to write them as well.
+
 # Output functions
 
 The oputut functions are all member functions of of `HiDEMLib`. Calling these will output particles, links, or mesh data, to do this at only the output interval they should wrap them in an if statement that checks if the current timestep is the output interval.

@@ -8,6 +8,7 @@
 
 size_t Map2dLoader::readInput(std::string path) {
     //
+
     Event loadEvent;
     loadEvent.start();
     int fieldCount;
@@ -40,9 +41,8 @@ size_t Map2dLoader::readInput(std::string path) {
         while (getline(inFile, line)) {
             int column = 0;
 
-            splitString(line, splitExpr, [&](std::string element) {
-                if (element.length() == 0)
-                {
+            splitStringDelims(line, " \t", [&](std::string element) {
+                if (element.length() == 0) {
                     return;
                 }
                 columns[column].push_back(std::stof(element));
