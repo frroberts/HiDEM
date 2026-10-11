@@ -4,7 +4,6 @@ set(TESTER_FILES_MPI
         CommunicatorTesterMulti.cpp
         DistributedSetupTest.cpp
         TransporterTesterMulti.cpp
-        StaticDistributionTesterMulti.cpp
         HDF5ReadWriteTestMulti.cpp)
 
 
@@ -16,21 +15,21 @@ if (ENABLE_CATCH)
             # ParticleDataTester.cpp
             # TestHelpers.cpp
             # NeighbourGridTester.cpp
-            # GeomtryTester.cpp
+            Map2DTester.cpp
             # ParticleGeneratorTester.cpp
             # GeometryLoaderTester.cpp
             # LinkDataTester.cpp
             # LinkGeneratorTester.cpp
             # IteratorBencher.cpp
             # CSVTester.cpp
-            # DomainTest.cpp
+            DomainTest.cpp
             # CommunicatorTesterSingle.cpp
             # GPUIteratorTest.cpp
             # TransporterTester.cpp
             # LoggerTester.cpp
             # HDF5ReadWriteTest.cpp
-            BalancerTester.cpp
-            # MeshTester.cpp
+            # BalancerTester.cpp
+            MeshTester.cpp
             # TomlTest.cpp
             # GeometryBuilderTest.cpp
              ../External/fmt/src/os.cc
@@ -41,7 +40,8 @@ if (ENABLE_CATCH)
             # VTUOutTester.cpp
             # SimdTester.cpp
             # GlobalLocalMappterTest.cpp
-            # HiDEMCheckpointTester.cpp
+            HiDEMCheckpointTester.cpp
+            Map2DTester.cpp
     )
 
     if (ENABLE_SIMD)
@@ -59,17 +59,15 @@ if (ENABLE_CATCH)
     target_compile_definitions(Tester PUBLIC SOA_CT)
 
     target_include_directories(Tester PUBLIC ${HDF5_INCLUDE_DIRS})
-    target_link_libraries(Tester PUBLIC MPI::MPI_CXX)
+    target_link_libraries(Tester PUBLIC MPI::MPI_C)
     target_link_libraries(Tester PUBLIC ${HDF5_LIBRARIES})
-    target_link_libraries(Tester PUBLIC ${HDF5_HL_LIBRARIES})
     target_link_libraries(Tester PUBLIC PLiB)
     target_link_libraries(Tester PUBLIC Iterators)
 
 
     target_include_directories(Tester_mpi PUBLIC ${HDF5_INCLUDE_DIRS})
-    target_link_libraries(Tester_mpi PUBLIC MPI::MPI_CXX)
+    target_link_libraries(Tester_mpi PUBLIC MPI::MPI_C)
     target_link_libraries(Tester_mpi PUBLIC ${HDF5_LIBRARIES})
-    target_link_libraries(Tester_mpi PUBLIC ${HDF5_HL_LIBRARIES})
     target_link_libraries(Tester_mpi PUBLIC PLiB)
     target_link_libraries(Tester_mpi PUBLIC Iterators)
 

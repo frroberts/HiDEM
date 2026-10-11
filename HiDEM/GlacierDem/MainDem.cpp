@@ -104,6 +104,8 @@ int main(int argc, char *argv[]) {
 
     auto bed = hiDem.getBedPtrs();
 
+	bed->toVTKHDF("bed.vtkhdf");
+
     // ------------------------------------------------
     //           Simulation variables
     // ------------------------------------------------

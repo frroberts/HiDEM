@@ -31,6 +31,7 @@ public:
     virtual void setOffset(Real3 offset) override;
     virtual auto getLimits() -> std::tuple<Real3, Real3> override;
 
+    void toVTKHDF(std::string path);
 };
 
 
@@ -67,6 +68,8 @@ public:
     virtual auto getLimits() -> std::tuple<Real3, Real3> override;
 
     std::tuple<Map2d<lpReal_t>*, Map2d<lpReal_t>*> getPtrs();
+
+    void toVTKHDF(std::string path);
 };
 
 

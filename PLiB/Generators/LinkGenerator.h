@@ -54,8 +54,9 @@ public:
 
         pDataPtr->iterateOwnedParticles(policy, [=] DEVCALLABLE (pInd_t pInd, LinkGenerator &lGen) {
             //
-            int i = 0;
+            int i = -1;
             accel->iteratePossibleNeighbours([&] (pInd_t nInd) {
+                i++;
 
                 if (pInd == nInd)
                     return;
@@ -101,7 +102,6 @@ public:
 
                 newLinksPtr[pos] = link;
 
-                i++;
             }, pInd);
         }, *this);
 

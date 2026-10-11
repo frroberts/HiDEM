@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <cassert>
 #include <fstream>
 #include <iostream>
 #include <regex>
@@ -15,13 +16,13 @@
 #include "Map2d.h"
 
 class Map2dLoader {
-    std::vector<std::vector<double>> columns;
+    std::vector<std::vector<float>> columns;
     int xPoints;
     int yPoints;
-    double xMin;
-    double yMin;
-    double xMax;
-    double yMax;
+    float xMin;
+    float yMin;
+    float xMax;
+    float yMax;
 
 public:
     size_t readInput(std::string path);
@@ -31,9 +32,7 @@ public:
         //
         Map2d<T> *ret = new Map2d<T>(xPoints, yPoints, xMin, yMin, xMax, yMax);
 
-        //int i = 100;
-        //std::cout << columns.at(0).at(i) << " " << columns.at(1).at(i) << " " << columns.at(ind).at(i) << std::endl;
-// #pragma omp parallel for
+        assert(xPoints*yPoints == columns.at(ind).size());
         for (int i = 0; i < columns[0].size(); i++) {
             ret->setPointCord(columns.at(0).at(i), columns.at(1).at(i), columns.at(ind).at(i));
         }

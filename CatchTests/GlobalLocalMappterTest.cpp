@@ -49,10 +49,6 @@ TEST_CASE( "Test bulk mapping", "[GlobalLocalMapper]" ) {
     mapper->bulkMap(vec);
     mapper->finalize();
 
-    for (int i  = 0; i < 10; i++) {
-        std::cout << mapper->values[i] << " " << mapper->keys[i] << std::endl;
-    }
-
     REQUIRE(mapper->getLocalInd(112) == 2);
     REQUIRE(mapper->getLocalInd(12) == 0);
     REQUIRE(mapper->getLocalInd(52) == 3);

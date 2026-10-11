@@ -15,7 +15,8 @@
 
 #include <stack>
 
-#include "Util/Util.h"
+#include "../Util/Util.h"
+#include <mpi.h>
 
 #ifdef ENABLE_HDF5
 
@@ -79,6 +80,7 @@ class HDF5IO {
 
         return std::make_tuple(localOffset, globalCount);
     }
+
 
     template<class T>
     hid_t getH5Type() {
@@ -177,7 +179,7 @@ public:
     }
 
     void closeFile() {
-        H5Fclose(fileID);
+        checkH5Error(H5Fclose(fileID));
     }
 
     template<class T>

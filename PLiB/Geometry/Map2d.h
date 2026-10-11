@@ -13,8 +13,12 @@
 #include <DevCall.h>
 #include <ManVec.h>
 #include <Allocator.h>
+#include <iomanip>
+
 #include "Map.h"
 #include "DevPortabilityLayer.h"
+#include "../H5IO/HDF5IO.h"
+#include "../Util/MPIHelpers.h"
 
 template<class T>
 class Map2d : public Map<T> {
@@ -74,12 +78,12 @@ public:
     }
 
     void setPointCord(float x, float y, T val) {
-        //
         x -= xMin;
-        x /= xRes;
         y -= yMin;
+        x /= xRes;
         y /= yRes;
-        //std::cout << (int)x << " " << (int)y << " " << val << std::endl
+        x = std::round(x);
+        y = std::round(y);
         data[(int) x + ((int) y * xPoints)] = val;
     }
 

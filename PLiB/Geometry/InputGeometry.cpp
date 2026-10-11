@@ -4,6 +4,9 @@
 
 #include "InputGeometry.h"
 
+#include "TupleHelpers.h"
+#include "../OutputWriters/VtkHdfWriter.h"
+
 
 bool InputDEM::withinGeometry(Real3 cord, lpReal_t radius) {
     if (cord.z + radius <= base->interp(cord.x, cord.y))
@@ -24,6 +27,32 @@ auto InputDEM::getLimits() -> std::tuple<Real3, Real3> {
     return std::tuple<Real3, Real3>(lower, upper);
 }
 
+
+void InputDEM::toVTKHDF(std::string path) {
+    //
+    if (getLocalRank() == 0) {
+        ManVec<lpReal_t> xPoints;
+        ManVec<lpReal_t> yPoints;
+        for (int y = 0; y < base->yPoints; ++y) {
+            for (int x = 0; x < base->xPoints; ++x) {
+                xPoints.push_back((x * base->xRes) + base->xMin);
+                yPoints.push_back((y * base->yRes) + base->yMin);
+            }
+        }
+
+        VtkHdfWriter writerBed;
+        writerBed.createFile("base.vtkhdf", MPI_COMM_SELF);
+
+        writerBed.writeQuadSurfaceSingle(xPoints.data(), yPoints.data(), base->data, base->xPoints, base->yPoints,
+                                         std::make_tuple(), packVecsDataPtrs());
+
+        VtkHdfWriter writerSurf;
+        writerSurf.createFile("surface.vtkhdf", MPI_COMM_SELF);
+
+        writerSurf.writeQuadSurfaceSingle(xPoints.data(), yPoints.data(), surface->data, surface->xPoints, surface->yPoints,
+                                          std::make_tuple(), packVecsDataPtrs());
+    }
+}
 
 
 void InputBox::setOffset(Real3 offset) {
@@ -64,4 +93,30 @@ auto InputBed::getLimits() -> std::tuple<Real3, Real3> {
 
 std::tuple<Map2d<lpReal_t>*, Map2d<lpReal_t>*> InputBed::getPtrs() {
     return std::make_tuple(bed, friction);
+}
+
+void InputBed::toVTKHDF(std::string path) {
+    //
+    VtkHdfWriter writer;
+    if (getLocalRank() == 0) {
+        writer.createFile(path, MPI_COMM_SELF);
+
+        ManVec<lpReal_t> fricOut;
+        for (int i = 0; i < bed->xPoints * bed->yPoints; ++i) {
+            fricOut.push_back(friction->data[i]);
+        }
+
+        ManVec<lpReal_t> xPoints;
+        ManVec<lpReal_t> yPoints;
+        for (int y = 0; y < bed->yPoints; ++y) {
+            for (int x = 0; x < bed->xPoints; ++x) {
+                xPoints.push_back((x * bed->xRes) + bed->xMin);
+                yPoints.push_back((y * bed->yRes) + bed->yMin);
+            }
+        }
+
+        writer.writeQuadSurfaceSingle(xPoints.data(), yPoints.data(), bed->data, bed->xPoints, bed->yPoints,
+                                      std::make_tuple("friction"), packVecsDataPtrs(fricOut));
+
+    }
 }

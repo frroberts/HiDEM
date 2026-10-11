@@ -208,6 +208,7 @@ int main(int argc, char *argv[]) {
     ExternalForces *extForcePtr = hiDem.getExternalForcePtr();
 
     auto bed = hiDem.getBedPtrs();
+    bed->toVTKHDF("bed.vtkhdf");
 
     // ------------------------------------------------
     //           Simulation variables

@@ -208,6 +208,75 @@ public:
 
         io.closeGroup();
     }
+
+    template<class CordT, typename... Names, typename... Fields>
+    void writeQuadSurfaceSingle(CordT *xCords, CordT *yCords, CordT *zCords, int xPoints, int yPoints,
+                                std::tuple<Names...> pointFieldNames, std::tuple<Fields...> pointOutFields) {
+        if (getLocalRank() == 0) {
+            io.openGroup("VTKHDF");
+            io.writeAttributeStr("Type", "UnstructuredGrid");
+            std::vector<long long int> version = {2, 2};
+            io.writeAttributeArr("Version", version);
+
+
+            int numQuads = (xPoints - 1) * (yPoints - 1);
+            ManVec<long long int> NumberOfPoints;
+            NumberOfPoints.push_back(xPoints * yPoints);
+            io.writeVectorFirst(NumberOfPoints, "NumberOfPoints");
+
+            // make the points
+            ManVec<float> points;
+            for (int y = 0; y < yPoints; ++y) {
+                for (int x = 0; x < xPoints; ++x) {
+                    points.push_back(xCords[x + (y * xPoints)]);
+                    points.push_back(yCords[x + (y * xPoints)]);
+                    points.push_back(zCords[x + (y * xPoints)]);
+                }
+            }
+            io.writeVectorAll2D(points, "Points", 3);
+
+            ManVec<int> NumberOfConnectivityIds;
+            NumberOfConnectivityIds.push_back(numQuads * 4);
+            io.writeVectorFirst(NumberOfConnectivityIds, "NumberOfConnectivityIds");
+
+            ManVec<int> NumberOfCells;
+            NumberOfCells.push_back(numQuads);
+            io.writeVectorFirst(NumberOfCells, "NumberOfCells");
+
+            ManVec<int> Offsets;
+            for (int i = 0; i < numQuads + 1; i++) {
+                Offsets.push_back((i) * 4);
+            }
+            io.writeVectorFirst(Offsets, "Offsets");
+
+            // make the quads
+            ManVec<int> Connectivity;
+            for (int y = 0; y < yPoints - 1; ++y) {
+                for (int x = 0; x < xPoints - 1; ++x) {
+                    Connectivity.push_back((x + 0) + ((y + 0) * xPoints));
+                    Connectivity.push_back((x + 1) + ((y + 0) * xPoints));
+                    Connectivity.push_back((x + 1) + ((y + 1) * xPoints));
+                    Connectivity.push_back((x + 0) + ((y + 1) * xPoints));
+                }
+            }
+            io.writeVectorFirst(Connectivity, "Connectivity");
+
+            ManVec<unsigned char> Types;
+            for (int i = 0; i < numQuads; ++i) {
+                Types.push_back(9); // quad
+            }
+            io.writeVectorFirst(Types, "Types");
+
+            io.openGroup("PointData");
+            unpackVals(pointFieldNames, pointOutFields, xPoints*yPoints);
+
+            io.closeGroup();
+
+            io.closeGroup();
+
+            io.closeFile();
+        }
+    }
 };
 
 

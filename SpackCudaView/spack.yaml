@@ -7,8 +7,8 @@ spack:
   specs:
   - gcc
   - cuda
-  - openmpi
-  - hdf5
+  - openmpi+cuda
+  - hdf5+mpi
   view: true
   concretizer:
-    unify: true
+    unify: when_possible

@@ -4,11 +4,11 @@
 
 #include <catch2/catch.hpp>
 
-#include "TestHelpers.h"
-
 #include <Geometry/Map2d.h>
 
-TEST_CASE( "Interp test index calculation", "[Map2d]" ) {
+#include "Geometry/MapLoader.h"
+
+TEST_CASE("Interp test index calculation", "[Map2d]") {
     {
         Map2d<double> g(2,2,0,0,1,1);
         auto[xLow,yLow,xHigh,yHigh] = g.getIndexes(0,1);
@@ -118,4 +118,26 @@ TEST_CASE( "Set point cord non symetric", "[Map2d]" ) {
     double res = g.interp(0, 0) ;
     double delta = res - 1.0;
     REQUIRE(abs(delta) < 0.001);
+}
+
+
+TEST_CASE("Load file", "[Map2d]") {
+    Map2dLoader loader;
+
+    loader.readInput("../HiDEM/GlacierDem/simple_domain.csv");
+
+    auto map = loader.get<float>(2);
+
+    for (int i = 0; i < map->xMax*map->yMax; ++i) {
+            std::cout << map->data[i] << " " << std::endl;
+    }
+
+    for (int i = 0; i < map->xMax; ++i) {
+        for (int j = 0; j < map->yMax; ++j) {
+            REQUIRE(map->interp(i,j) == Approx( 1000.f).epsilon(1e-6));
+        }
+    }
+
+
+
 }

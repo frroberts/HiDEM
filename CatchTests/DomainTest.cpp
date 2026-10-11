@@ -8,8 +8,6 @@
 #include <Domain.h>
 #include <World.h>
 
-#include "../HiDEMLib/HiDEMTransportParticle.h"
-
 TEST_CASE( "Test within", "[Domain]" ) {
     Domain d;
     d.upper = {1,1,1};
@@ -72,17 +70,15 @@ TEST_CASE( "World test setup", "[Domain]" ) {
     d2.upperHalo = {2,2,3};
     world.domains.push_back(d2);
     //
-    HiDEMTransportParticle p1;
-    p1.cord = {0.5};
-    p1.owner = 0;
-    HiDEMTransportParticle p2;
-    p2.cord = {0.5,0.5,1.5};
-    p2.owner = 1;
+    Real3 p1;
+    p1 = {0.5};
+    Real3 p2;
+    p2 = {0.5,0.5,1.5};
 
-    REQUIRE(d2.within(p2.cord));
-    REQUIRE(!d1.within(p2.cord));
-    REQUIRE(d2.withinHalo(p2.cord));
-    REQUIRE(d1.withinHalo(p2.cord));
+    REQUIRE(d2.within(p2));
+    REQUIRE(!d1.within(p2));
+    REQUIRE(d2.withinHalo(p2));
+    REQUIRE(d1.withinHalo(p2));
 
 
 }

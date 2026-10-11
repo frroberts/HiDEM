@@ -54,7 +54,7 @@ wForce = 0.0
 outWorkingPath = "../Data/"
 # The program will add the appropriate prefix to this name, wont be written if left empty or not present
 outParticleFile = "pOut"
-# the type of output we use, CSV or HDF5, VTK (buggy), VKTHDF
+# the type of output we use, CSV or HDF5, VTK (buggy), VTKHDF
 outParticleType = "VTKHDF"
 # The program will add the appropriate prefix to this name, wont be written if left empty or not present
 outLinkFile = ""

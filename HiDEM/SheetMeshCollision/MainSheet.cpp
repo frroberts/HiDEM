@@ -408,9 +408,12 @@ int main(int argc, char *argv[]) {
         lpReal_t vForce = pData.vForce[pInd];
         lpReal_t wForce = pData.wForce[pInd];
 
+
         // NOTE!!! this is here more as a demo og how interactions can be done, it it not nessecarily physcially acurate !!!!
         mesh->closestTriFun(xCord,yCord, zCord, bedInteract, pInd, [&] (int tri, lpReal_t dist){
             dist = sqrt(dist);
+
+            dragCoeff = lpReal_t(1e+8) * scale * scale;
 
             lpReal_t xForceCol = mesh->dataPtr->xNorm[tri] * (bedStiffness * dist);
             lpReal_t yForceCol = mesh->dataPtr->yNorm[tri] * (bedStiffness * dist);

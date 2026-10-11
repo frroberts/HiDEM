@@ -66,7 +66,7 @@ if(ENABLE_OMP)
     target_link_libraries(PLiB PUBLIC OpenMP::OpenMP_CXX)
 endif()
 
-target_link_libraries(PLiB PUBLIC MPI::MPI_CXX)
+target_link_libraries(PLiB PUBLIC MPI::MPI_C)
 
 if (ENABLE_CUDA)
     set_source_files_properties(
@@ -76,6 +76,9 @@ if (ENABLE_CUDA)
             Balancer/Balancer.cpp
             Geometry/GeometryCollection.cpp
             Geometry/InputMesh.cpp
+            Geometry/Map2dLoader.cpp
+            Geometry/InputGeometry.cpp
+            Geometry/CompoundInput.cpp
             LoggerV2/RangeCollection.cpp
 
             PROPERTIES LANGUAGE CUDA)
@@ -112,8 +115,10 @@ elseif (ENABLE_HIP)
     find_package(rocprim REQUIRED)
     find_package(hipcub REQUIRED)
     find_package(rocthrust REQUIRED)
+    find_package(hiprand REQUIRED)
 
     target_link_libraries(PLiB PUBLIC hip::hipcub)
+    target_link_libraries(PLiB PUBLIC hip::hiprand)
     target_link_libraries(PLiB PUBLIC roc::rocthrust)
     target_link_libraries(PLiB PUBLIC roc::rocprim)
 
@@ -123,7 +128,6 @@ endif()
 if (ENABLE_HDF5)
     target_include_directories(PLiB PUBLIC ${HDF5_INCLUDE_DIRS})
     target_link_libraries(PLiB PUBLIC ${HDF5_LIBRARIES})
-    target_link_libraries(PLiB PUBLIC ${HDF5_HL_LIBRARIES})
 endif ()
 
 target_link_libraries(PLiB PUBLIC Iterators)

@@ -138,7 +138,7 @@ linkWith = [0]
 [[geometry]]
 type = "dem"
 name = "glacier"
-path = "../Samples/mass3.csv"
+path = "../HiDEM/GlacierDem/mass3.csv"
 topFieldID = 2
 baseFieldID = 3
 
@@ -146,6 +146,6 @@ baseFieldID = 3
 # mandatory to have one bed geometry
 type = "bed"
 name = "bed"
-path = "../Samples/mass3.csv"
+path = "../HiDEM/GlacierDem/mass3.csv"
 baseFieldID = 3
 frictionFieldID = 4

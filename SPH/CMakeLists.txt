@@ -3,7 +3,6 @@ add_executable(SPH SPH/SPHMain.cpp ${BASE_FILES} SPH/SPHParticleData.h)
 
 target_include_directories(SPH PUBLIC ${HDF5_INCLUDE_DIRS})
 target_link_libraries(SPH PUBLIC ${HDF5_LIBRARIES})
-target_link_libraries(SPH PUBLIC ${HDF5_HL_LIBRARIES})
 
 target_link_libraries(SPH PUBLIC MPI::MPI_CXX)
 

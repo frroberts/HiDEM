@@ -67,7 +67,7 @@ if(ENABLE_FMATH)
 endif()
 
 if (ENABLE_ASAN)
-    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
+    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
 
     if (ENABLE_UBSAN)
         SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=undefined")
@@ -85,7 +85,7 @@ endif ()
 
 if (ENABLE_CUDA)
     check_language(CUDA REQUIRED)
-    set(CMAKE_CUDA_ARCHITECTURES "70" "75" "86" "80")
+    set(CMAKE_CUDA_ARCHITECTURES "75" "86" "80")
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda --expt-relaxed-constexpr -std=c++20 -lineinfo -g -allow-unsupported-compiler -lcurand" )
 
     enable_language(CUDA)
@@ -97,10 +97,25 @@ endif ()
 if (ENABLE_HIP)
     check_language(HIP REQUIRED)
     enable_language(HIP)
-    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -g -O3 --offload-arch=gfx90a -Wno-unused-result" )
+    set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -g -O3 --offload-arch=gfx90a -Wno-unused-result")
     set(GPU_TARGETS "gfx90a" CACHE STRING "GPU targets to compile for")
     set(CMAKE_HIP_ARCHITECTURES "gfx90a" CACHE STRING "GPU targets to compile for")
 
+endif ()
+
+if (ENABLE_GDR)
+    # if this is a cray system
+    # and CPE is a POS
+    #if(DEFINED ENV{CRAYPE_VERSION})
+    #    message("Cray PE detected force linking GTL")
+    #    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${CRAY_XPMEM_POST_LINK_OPTS} –lxpmem -L${MPICH_DIR}/lib -lmpi –L$(GTL_ROOT) -lmpi_gtl_hsa")
+    #    if (ENABLE_HIP)
+    #        set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} ${CRAY_XPMEM_INCLUDE_OPTS} -I${MPICH_DIR}/include")
+    #    endif ()
+    #    if (ENABLE_CUDA)
+    #        set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} ${CRAY_XPMEM_INCLUDE_OPTS} -I${MPICH_DIR}/include")
+    #    endif ()
+    #endif ()
 endif ()
 
 if(ENABLE_OMP)
@@ -110,14 +125,23 @@ if(ENABLE_OMP)
     endif ()
 endif()
 
-find_package(MPI REQUIRED COMPONENTS C CXX)
+find_package(MPI REQUIRED COMPONENTS C)
 if (MPI_FOUND)
     include_directories(SYSTEM ${MPI_INCLUDE_PATH})
 endif ()
 
 if (ENABLE_HDF5)
     find_package(HDF5 COMPONENTS C)
+    # if we dont find it, try setting it from the root path
+    #if(DEFINED ENV{CRAYPE_VERSION})
+    #    set(HDF5_INCLUDE_DIRS "${HDF5_ROOT}/include")
+    #    set(HDF5_LIBRARIES "lhdf5")
+    #    link_directories("${HDF5_ROOT}/lib")
+    #endif()
+
 endif()
+
+add_definitions(-DFMT_HEADER_ONLY)
 
 set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY true)
 
@@ -138,6 +162,6 @@ add_subdirectory(Iterators/)
 add_subdirectory(PLiB/)
 add_subdirectory(HiDEMLib/)
 add_subdirectory(HiDEM/)
-add_subdirectory(Tests/)
+add_subdirectory(CatchTests/)
 add_subdirectory(Benchmark/)
 

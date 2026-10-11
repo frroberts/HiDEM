@@ -13,12 +13,12 @@ size_t Map2dLoader::readInput(std::string path) {
     loadEvent.start();
     int fieldCount;
 
-    xMin = std::numeric_limits<double>::max();
-    xMax = std::numeric_limits<double>::min();
-    yMin = std::numeric_limits<double>::max();
-    yMax = std::numeric_limits<double>::min();
+    xMin = std::numeric_limits<float>::max();
+    xMax = std::numeric_limits<float>::min();
+    yMin = std::numeric_limits<float>::max();
+    yMax = std::numeric_limits<float>::min();
 
-    std::unordered_map<double, int> rowCounts;
+    std::unordered_map<float, int> rowCounts;
 
     std::ifstream inFile;
     inFile.open(path);

@@ -25,8 +25,6 @@ add_library(HiDEMLib STATIC
         HiDEMGlobal.h
         HiDEMH5Checkpoint.h
         HiDEMH5Checkpoint.cpp
-        ../External/fmt/src/os.cc
-        ../External/fmt/src/format.cc
         ../PLiB/Accel/CombinedAccelSmem.h
         ../PLiB/Accel/LinkAccelSide.h
         ../PLiB/Accel/CombinedAccel.h
@@ -89,7 +87,7 @@ endif()
 
 target_link_libraries(HiDEMLib PUBLIC Iterators)
 target_link_libraries(HiDEMLib PUBLIC PLiB)
-target_link_libraries(HiDEMLib PUBLIC MPI::MPI_CXX)
+target_link_libraries(HiDEMLib PUBLIC MPI::MPI_C)
 
 target_include_directories(HiDEMLib INTERFACE .)
 

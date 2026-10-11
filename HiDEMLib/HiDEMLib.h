@@ -21,7 +21,6 @@
 #include <ParticleDataHandler.h>
 #include <LinkDataHandler.h>
 
-#include <Geometry/Bed.h>
 #include <Transport/LinkTransporter.h>
 
 #include "DomainBuilder.h"
@@ -252,6 +251,8 @@ public:
     template<class LinkFun, class ... NeighArgs, class ... LinkSideArgs, class ... LinkArgs>
     void linkUpdate(LinkFun breakLinks,
                     std::tuple<NeighArgs...> neighArgs, std::tuple<LinkSideArgs...> linkSideArgs, std::tuple<LinkArgs...> linkArgs) {
+        auto range = xvtxRangeStart("link");
+
         RangeV2 r("link update", 3);
 
         auto fullArgs = make3Pack(neighArgs, linkSideArgs, linkArgs);
@@ -259,6 +260,7 @@ public:
         accel->iterateLinks(execType, *pDataPtr, *lDataPtr, breakLinks, fullArgs);
         //lDataPtr->iterateAllLinks(execType, breakLinks, *lDataPtr, *pDataPtr);
         Iterator::syncAll();
+        xvtxRangeEnd(range);
     }
 
     template<class LinkFun, class... NeighArgs, class... LinkSideArgs, class... LinkArgs>

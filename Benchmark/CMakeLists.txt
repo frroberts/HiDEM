@@ -2,7 +2,7 @@ add_executable(Bench BenchMain.cpp)
 
 target_link_libraries(Bench PUBLIC Iterators)
 target_link_libraries(Bench PUBLIC PLiB)
-target_link_libraries(Bench PUBLIC MPI::MPI_CXX)
+target_link_libraries(Bench PUBLIC MPI::MPI_C)
 
 if(ENABLE_OMP)
     target_link_libraries(PLiB PUBLIC OpenMP::OpenMP_CXX)
@@ -10,7 +10,6 @@ endif()
 
 target_include_directories(Bench PUBLIC ${HDF5_INCLUDE_DIRS})
 target_link_libraries(Bench PUBLIC ${HDF5_LIBRARIES})
-target_link_libraries(Bench PUBLIC ${HDF5_HL_LIBRARIES})
 
 if (ENABLE_CUDA)
     set_source_files_properties(

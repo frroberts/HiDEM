@@ -375,13 +375,8 @@ public:
         Iterator::iterateBlocked(OffloadExec(), [=] __device__(int b, int i, CombinedAccelSmem &accel,
                                                                ParticleData &pData, LinkData &lData,
                                                                NeighAccel &nList) {
-            pInd_t ind = ((b * accelxGrid) + i); // figure out what the real index here is actually
+            pInd_t ind = ((b * accelxGrid) + i);
 
-            /*
-            __shared__ int hits[32];
-            if (i < 32)
-                hits[i] = 0;
-            */
             if (ind >= accel.iterationOrder.size())
                 return;
             pInd_t pInd = accel.iterationOrder[ind];
@@ -389,9 +384,6 @@ public:
             // uncachable block
             int activeInBlock = accel.activeInBlock[b];
             if (activeInBlock == -1) {
-                if (threadIdx.x == 0) {
-                    // push out thr block index here and handle the uncachable later
-                }
                 return;
             }
 
@@ -410,20 +402,13 @@ public:
                     else
                         right = loc - 1;
                 }
-                //printf("index missing from cache, code will crash %lli %d %i %i\n", pInd, b, loc, accel.activeInBlock[b]);
-                //assert(false);
                 return -1;
             };
             accel.selfPartIndInCache[ind] = getCachedIndex(pInd);
 
-
             for (size_t k = 0; k < nList.numNeighs[pInd]; k++) {
                 pInd_t pIndOther = nList.getPartNeighId(k, pInd);
-                accel.neighPartIndInCache[
-                        getIndexInBlock(b, threadIdx.x, k, accel.indexBlockSize, accel.accelxGrid)
-                        // ind + (k * accel.iterationOrder.size())
-                        ] =
-                        getCachedIndex(pIndOther); // figure out what the real index here is actually
+                accel.neighPartIndInCache[getIndexInBlock(b, threadIdx.x, k, accel.indexBlockSize, accel.accelxGrid)] = getCachedIndex(pIndOther);
             }
 
             int particleLinkCount = accel.lAccel.linksPerParticle[pInd];
@@ -440,14 +425,8 @@ public:
                 } else {
                     ctInd = lData.sideIndEndA[lInd];
                 }
-                accel.linkCTInd[
-                        getIndexInBlock(b, threadIdx.x, k, accel.indexBlockSize,accel.accelxGrid)
-                        //ind + (k * accel.iterationOrder.size())
-                        ] = ctInd; // should be pind right ? no should be ind
-                accel.linkedPartIndInCache[
-                        //ind + (k * accel.iterationOrder.size())
-                        getIndexInBlock(b, threadIdx.x, k, accel.indexBlockSize,accel.accelxGrid)
-                        ] = getCachedIndex(pIndOther); // figure out what the real index here is actually
+                accel.linkCTInd[getIndexInBlock(b, threadIdx.x, k, accel.indexBlockSize,accel.accelxGrid)] = ctInd;
+                accel.linkedPartIndInCache[getIndexInBlock(b, threadIdx.x, k, accel.indexBlockSize,accel.accelxGrid)] = getCachedIndex(pIndOther);
             }
 
         }, (size_t) accelxGrid, iterationOrder.size(), *this, pData, lData, nList);
@@ -798,6 +777,7 @@ pairIteratorCombinedCache(pInd_t *indexes,
                           int16_t *neighPartIndInCachePtr,
                           int *numNeighsPtr,
                           int16_t *selfPartIndInCachePtr, uint8_t *statePtr,
+                          uint8_t *sideStatePtr,
                           hpReal_t *xCordPtr, hpReal_t *yCordPtr, hpReal_t *zCordPtr,
                           size_t numIndexes,
                           int indexBlockSize, FullArgs args) {
@@ -869,11 +849,7 @@ pairIteratorCombinedCache(pInd_t *indexes,
 
 #pragma unroll 3
         for (size_t i = threadIdx.y; i < numNeighs; i = i + blockDim.y) {
-            pInd_t pIndOther = neighPartIndInCachePtr[
-                    getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize, blockDim.x)
-
-                    //idxCache + (i * offset)
-                    ];  // not idx
+            pInd_t pIndOther = neighPartIndInCachePtr[getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize, blockDim.x)];
             auto cordOther = getAtIndTuple(pIndOther, cordArgShrdPtr);
             auto neigh = getAtIndTuple(pIndOther, neighArgsShrdPtr);
 
@@ -892,18 +868,10 @@ pairIteratorCombinedCache(pInd_t *indexes,
 
 #pragma unroll 3
         for (int i = threadIdx.y; i < particleLinkCount; i = i + blockDim.y) {
-            pInd_t pIndOther = linkedPartIndInCachePtr[
-                    //idxCache + (i * offset)
-                    getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize, blockDim.x)
-                    ];
-            lInd_t ctInd = linkCTIndPtr[
-                    //idxCache + (i * offset)
-                    getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize, blockDim.x)
-                    ];
+            pInd_t pIndOther = linkedPartIndInCachePtr[getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize, blockDim.x)];
+            lInd_t ctInd = linkCTIndPtr[getIndexInBlock(cacheBlockIdx, threadIdx.x, i, indexBlockSize, blockDim.x)];
             lInd_t lInd = accel.lAccel.getPartLinkId(i, pInd);
 
-            //if(blockId == 12)
-            //    printf("%i %i %li %i %li \n", blockId, tid, pInd, i, ctInd);
             auto cordOther = getAtIndTuple(pIndOther, cordArgShrdPtr);
             auto neigh = getAtIndTuple(pIndOther, neighArgsShrdPtr);
             auto ct = getAtIndTuple(ctInd, linkSideArgs);
@@ -926,18 +894,13 @@ pairIteratorCombinedCache(pInd_t *indexes,
         }
     }
     __syncthreads();
-/*
-    // save out via shared
-    auto neighsLinksIteratedShrd = makeSharedPtrs(baseShardPtr, HiDEMSmemAccelCombined::accelxGrid,
-                                              std::make_tuple(iteratedNeighboursPtr, iteratedLinksPtr));
-*/
+
     // todo remove 2 int offset here
     auto forceShrd = makeSharedPtrs(&baseShardPtr[sizeof(int)*2*CombinedAccelSmem::accelxGrid],
                                     CombinedAccelSmem::accelxGrid, forceArgs);
 
     if (threadIdx.y == 0) {
         setAtIndTuple(nidx, forceShrd, zeroTuple(forceShrd));
-        //setAtIndTuple(nidx, neighsLinksIteratedShrd, zeroTuple(neighsLinksIteratedShrd));
     }
 
     __syncthreads();
@@ -946,7 +909,6 @@ pairIteratorCombinedCache(pInd_t *indexes,
     for (int i = 0; i < blockDim.y; ++i) {
         if (i == threadIdx.y) {
             addAtIndTuple(nidx, forceShrd, force);
-            //addAtIndTuple(nidx, neighsLinksIteratedShrd, std::make_tuple(iteratedNeighs, iteratedLinks));
         }
         __syncthreads();
     }
@@ -958,7 +920,6 @@ pairIteratorCombinedCache(pInd_t *indexes,
         pInd_t pInd = indexes[idx];
 
         setAtIndTuple(pInd, forceArgs, getAtIndTuple(nidx, forceShrd));
-        //setAtIndTuple(pInd, std::make_tuple(iteratedNeighboursPtr, iteratedLinksPtr), getAtIndTuple(nidx, neighsLinksIteratedShrd));
     }
 }
 
@@ -1003,6 +964,7 @@ void CombinedAccelSmem::iterateCombined(Policy policy, ManVec<pInd_t> &indexes, 
                 nList.numNeighs.data(),
                 selfPartIndInCache.data(),
                 lData.state.data(),
+                sideState.data(),
 
                 pData.xCord.data(),
                 pData.yCord.data(),
