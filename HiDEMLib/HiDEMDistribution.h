@@ -237,8 +237,9 @@ public:
             Iterator::iterate(OffloadExec(), [=] DEVCALLABLE (ind_t i, HiDEMParticleData &pData, LDataT &lData, HiDEMDistribution &dist) {
                 pInd_t pInd = pData.ownedIndexes[i];
 
-                double weight = 1 + pData.iteratedNeighbours[pInd];
-                weight += 1 + pData.iteratedLinks[pInd];
+                //double weight = 1 + pData.iteratedNeighbours[pInd];
+                //weight += 1 + pData.iteratedLinks[pInd];
+                double weight = 1;
 
                 xCordPtr[i] = pData.xCord[pInd];
                 yCordPtr[i] = pData.yCord[pInd];

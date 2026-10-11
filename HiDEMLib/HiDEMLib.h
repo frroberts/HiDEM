@@ -49,6 +49,8 @@ class HiDEMLib {
 public:
     double accumulatedDist = 0;
 
+    std::chrono::steady_clock::time_point runStart;
+
     // todo fix this better
     // if building CPU and SMEM, non smem handled by default clause
 #if defined(GPU) && defined(ENABLE_SMEM)
@@ -119,6 +121,8 @@ public:
     int startTimestep = 0;
     int outputInterval;
     int iterationBlockSize = 10;
+    unsigned int maxMinutes;
+
 
     DynamicVariable<int> *timeStep;
 
@@ -226,7 +230,9 @@ public:
     // -----------------------------
     // timestep functions
     bool run(){
-        return currentTimestep < endTimestep;
+        int runMins =  std::chrono::duration_cast<std::chrono::minutes>(std::chrono::steady_clock::now() - runStart).count();
+
+        return currentTimestep < endTimestep && runMins < maxMinutes;
     }
 
     bool runOutput(){
@@ -417,7 +423,6 @@ public:
         lpReal_t yMax = std::numeric_limits<lpReal_t>::min();
         lpReal_t zMax = std::numeric_limits<lpReal_t>::min();
 
-        auto *owndedPtr= pDataPtr->ownedIndexes.data();
         auto *xDiffPtr = pDataPtr->xDiff.data();
         auto *yDiffPtr = pDataPtr->yDiff.data();
         auto *zDiffPtr = pDataPtr->zDiff.data();
@@ -550,7 +555,7 @@ public:
             needsRedistribute = true;
         } else if (dynamicRedistribution && needsGridRegen) {
             RangeV2 r("boundCheck", 2);
-            needsRedistribute = redistBoundsCheck(searchDistance, *pDataPtr);
+            needsRedistribute |= redistBoundsCheck(searchDistance, *pDataPtr);
         }
 
         // run redistrubute the when needed, the first timestep and the specified one
@@ -560,6 +565,9 @@ public:
             // Logger::writeAtFirst(fmt::format("redistribute ts: {} \n", ts));
             MPI_Barrier(MPI_COMM_WORLD);
             distr->syncCT(*lDataPtr, *lMapperPtr);
+
+            computeActiveLinks(pDataPtr->iteratedLinks);
+            computeIteratedNeighbours(pDataPtr->iteratedNeighbours);
 
             distr->reDistribute(*pDataPtr, *lDataPtr, *pMapperPtr, *lMapperPtr, searchDistance * haloScale,
                                 reBalanceTolerance);
@@ -738,12 +746,14 @@ public:
 
     void setup(ArgParser &parser, double scale) {
 
+        runStart = std::chrono::steady_clock::now();
+
         timeStep = new DynamicVariable<int>();
         timeStep->set(0);
         //
         endTimestep = parser.getArg<int>("iteration.timeSteps").value_or(10000);
         outputInterval = parser.getArg<int>("iteration.outputInterval").value_or(0);
-
+        maxMinutes = parser.getArg<unsigned int>("iteration.maxMinutes").value_or(-1);
 
         initBalancePoints = parser.getArg<int>("distribution.initBalancePoints").value_or(10000);
         initBalanceTolerance = parser.getArg<double>("distribution.initBalanceTolerance").value_or(0.001);
@@ -789,6 +799,10 @@ public:
 
         if (fromRestart) {
             Logger::writeAtFirst("Starting from restart: " + fromRestart.value() + "\n");
+            if (!std::filesystem::exists(fromRestart.value())) {
+                Logger::writeAtFirst("Restart file does not exist: " + fromRestart.value() + "\n");
+                exit(1);
+            }
             setFromRestart(fromRestart.value());
         }
 
@@ -921,7 +935,7 @@ public:
         lDataPtr->remap(lMapper);
 
         // dont sync CT as the neighbours at this stage dont have any
-        distr.reDistribute(*pDataPtr, *lDataPtr, pMapper, lMapper, haloSize, reBalanceTolerance);
+        // distr.reDistribute(*pDataPtr, *lDataPtr, pMapper, lMapper, haloSize, reBalanceTolerance);
 
         delete pMapperPtr;
         delete lMapperPtr;

@@ -51,6 +51,13 @@ namespace Parsers {
 
     template<>
     inline
+    unsigned int getAs<unsigned int>(std::string value) {
+        return std::stoul(value);
+    }
+
+
+    template<>
+    inline
     bool getAs<bool>(std::string value) {
         std::transform(value.begin(), value.end(), value.begin(),
                        [](unsigned char c) { return std::tolower(c); });
