@@ -842,6 +842,7 @@ public:
         fromRestart = true;
         startTimestep = checkpoint.readTimestep();
         currentTimestep = checkpoint.readTimestep();
+        timeStep->set(currentTimestep);
     }
 
     std::tuple<PDataT *, LDataT *>
